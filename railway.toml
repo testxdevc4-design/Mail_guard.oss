@@ -1,0 +1,34 @@
+[build]
+builder = "nixpacks"
+
+[[services]]
+name = "api"
+source = "."
+
+[services.build]
+dockerfile = "Dockerfile.api"
+
+[services.deploy]
+startCommand = "uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+
+[[services]]
+name = "worker"
+source = "."
+
+[services.build]
+dockerfile = "Dockerfile.worker"
+
+[services.deploy]
+startCommand = "arq apps.worker.main.WorkerSettings"
+
+[[services]]
+name = "bot"
+source = "."
+
+[services.build]
+dockerfile = "Dockerfile.bot"
+
+[services.deploy]
+startCommand = "python -m apps.bot.main"
