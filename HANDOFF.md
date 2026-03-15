@@ -1,62 +1,74 @@
-# HANDOFF — Part 01 of 15
+# HANDOFF — Part 02 of 15
 
 ## Files created / modified
 
 | File | Description |
 |------|-------------|
-| `core/__init__.py` | Empty package init |
-| `core/config.py` | Pydantic v2 BaseSettings — validates ENCRYPTION_KEY (64 hex chars), JWT_SECRET (≥64 chars), all required env vars on import |
-| `apps/__init__.py` | Empty package init |
-| `apps/api/__init__.py` | Empty package init |
-| `apps/api/routes/__init__.py` | Empty package init |
-| `apps/api/middleware/__init__.py` | Empty package init |
-| `apps/worker/__init__.py` | Empty package init |
-| `apps/bot/__init__.py` | Empty package init |
-| `tests/__init__.py` | Empty package init |
-| `tests/unit/__init__.py` | Empty package init |
-| `tests/integration/__init__.py` | Empty package init |
-| `db/migrations/001_sender_emails.sql` | sender_emails table — SMTP accounts with encrypted app passwords |
-| `db/migrations/002_projects.sql` | projects table — per-integration config with OTP settings and email templates |
-| `db/migrations/003_api_keys.sql` | api_keys table — SHA-256 key hash only, no plaintext |
-| `db/migrations/004_otp_records.sql` | otp_records table — OTP lifecycle, bcrypt hash, attempt counter |
-| `db/migrations/005_magic_links.sql` | magic_links table — single-use tokens stored as SHA-256 hash |
-| `db/migrations/006_webhooks.sql` | webhooks table — developer webhook URLs with encrypted signing secrets |
-| `db/migrations/007_email_logs.sql` | email_logs table — immutable audit log, recipient stored as HMAC hash |
-| `requirements.txt` | All Python dependencies for api, worker, bot + SDK dev tools |
-| `.env.example` | Every environment variable with generation commands and descriptions |
-| `docker-compose.yml` | api + worker + bot + redis for local development |
-| `Dockerfile.api` | API service Dockerfile — python:3.12-slim, non-root user |
-| `Dockerfile.worker` | Worker service Dockerfile — python:3.12-slim, non-root user |
-| `Dockerfile.bot` | Bot service Dockerfile — python:3.12-slim, non-root user |
-| `railway.toml` | Railway deployment config — 3 services: api, worker, bot |
+| `apps/api/main.py` | FastAPI app factory — CORS middleware, SecurityHeadersMiddleware, router registration, /docs only in development (~30 lines) |
+| `apps/api/routes/health.py` | GET /health — checks Supabase + Redis connectivity, returns `{status, db, redis}` with 200 always (~40 lines) |
+| `apps/api/middleware/security.py` | `SecurityHeadersMiddleware` — Secure() headers (X-Frame-Options, X-Content-Type-Options, HSTS, etc.), X-Request-ID passthrough/generation, X-Response-Time (~22 lines) |
+| `apps/api/Dockerfile` | python:3.12-slim, non-root appuser, uvicorn CMD, EXPOSE 3000 (~10 lines) |
+| `apps/worker/Dockerfile` | python:3.12-slim, non-root appuser, arq CMD, EXPOSE 3000 (~10 lines) |
+| `apps/bot/Dockerfile` | python:3.12-slim, non-root appuser, python -m apps.bot.main CMD, EXPOSE 3000 (~10 lines) |
+| `.github/workflows/ci.yml` | ruff + mypy + pytest on every push/PR; Railway deploy on main push; permissions: contents: read (~58 lines) |
+| `core/config.py` | Added `# type: ignore[call-arg]` to `settings = Settings()` for mypy/pydantic-settings compatibility |
 
 ## What works right now
 
 ```bash
-# Verify settings load with valid env vars
+# Verify app creates and /health route exists
 python -c "
 import os
 os.environ.update({
   'SUPABASE_URL': 'https://test.supabase.co',
   'SUPABASE_SERVICE_ROLE_KEY': 'key',
-  'REDIS_URL': 'rediss://x:x@host:6379',
+  'REDIS_URL': 'redis://localhost:6379',
   'ENCRYPTION_KEY': 'a' * 64,
   'JWT_SECRET': 'b' * 64,
   'TELEGRAM_BOT_TOKEN': 'tok',
   'TELEGRAM_ADMIN_UID': '1',
 })
-from core.config import Settings; s = Settings(); print(s.ENV)
+from apps.api.main import create_app
+app = create_app()
+print(app.title, [r.path for r in app.routes])
 "
+# → MailGuard OSS ['/openapi.json', '/health']
 
-# Verify bad key raises immediately
-python -c "from core.config import Settings; Settings(ENCRYPTION_KEY='short')"
-# → raises pydantic_core.ValidationError (contains ValueError: ENCRYPTION_KEY must be 64 hex chars)
+# Verify security headers work
+python -c "
+import os, asyncio
+os.environ.update({
+  'SUPABASE_URL': 'https://test.supabase.co',
+  'SUPABASE_SERVICE_ROLE_KEY': 'key',
+  'REDIS_URL': 'redis://localhost:6379',
+  'ENCRYPTION_KEY': 'a' * 64,
+  'JWT_SECRET': 'b' * 64,
+  'TELEGRAM_BOT_TOKEN': 'tok',
+  'TELEGRAM_ADMIN_UID': '1',
+})
+from httpx import AsyncClient, ASGITransport
+from apps.api.main import app
+async def t():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as c:
+        r = await c.get('/health')
+        assert r.status_code == 200
+        assert r.headers.get('x-frame-options') == 'SAMEORIGIN'
+        assert r.headers.get('x-content-type-options') == 'nosniff'
+        assert r.headers.get('x-request-id')
+        print('ALL OK', r.json())
+asyncio.run(t())
+"
+# → ALL OK {'status': 'degraded', 'db': False, 'redis': False}
+
+# Lint: all checks passed
+ruff check apps/ core/
+
+# Types: no issues
+mypy apps/ core/ --ignore-missing-imports --no-strict-optional
 ```
 
 ## What is NOT built yet
 
-- `apps/api/main.py` — FastAPI app factory (Part 02)
-- `apps/api/routes/health.py` — /health endpoint (Part 02)
 - `apps/worker/main.py` — ARQ WorkerSettings (Part 06)
 - `apps/bot/main.py` — Telegram bot entry point (Part 11)
 - `core/crypto.py` — AES-256-GCM encrypt/decrypt + HMAC email (Part 03)
@@ -70,6 +82,7 @@ python -c "from core.config import Settings; Settings(ENCRYPTION_KEY='short')"
 - `core/webhooks.py` — HMAC-signed webhook delivery (Part 09)
 - `core/redis_client.py` — Redis/ARQ connection pool (Part 06)
 - `core/api_keys.py` — Key generation and validation (Part 05)
+- All API route files (OTP, magic, webhooks, etc.) — Parts 05–09
 - All SDK code — Part 14
 - All bot commands — Parts 11–13
 - All tests — Parts 03–15
@@ -77,48 +90,29 @@ python -c "from core.config import Settings; Settings(ENCRYPTION_KEY='short')"
 
 ## Env vars introduced
 
-```
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service role key from Supabase dashboard>
-REDIS_URL=rediss://default:<token>@<host>.upstash.io:6379
-ENCRYPTION_KEY=<python -c "import secrets; print(secrets.token_hex(32))">
-JWT_SECRET=<python -c "import secrets; print(secrets.token_hex(64))">
-JWT_EXPIRY_MINUTES=10
-MAGIC_LINK_EXPIRY_MINUTES=15
-TELEGRAM_BOT_TOKEN=<from @BotFather>
-TELEGRAM_ADMIN_UID=<integer, from @userinfobot>
-ENV=production
-PORT=3000
-ALLOWED_ORIGINS=
-INTERNAL_API_URL=
-ROTATION_THRESHOLD=0.80
-```
+No new env vars in Part 02 — all vars remain from Part 01.
 
 ## DB state
 
-- 7 migration files created: `db/migrations/001–007.sql`
-- **Migrations must be run manually in the Supabase SQL Editor before Part 02**
-- Run each file in order: 001 → 002 → 003 → 004 → 005 → 006 → 007
-- Verify with: `SELECT table_name FROM information_schema.tables WHERE table_schema='public'`
-- Expected tables: `sender_emails`, `projects`, `api_keys`, `otp_records`, `magic_links`, `webhooks`, `email_logs`
+- 7 migration files still pending manual run in Supabase SQL Editor (001 → 007)
+- No schema changes in Part 02
 
 ## Decisions made
 
-- Used `pydantic-settings` v2 `BaseSettings` with `@field_validator` decorators (not v1 `@validator`)
-- `settings = Settings()` at module level — fails fast at process startup on bad config
-- All Dockerfiles use `python:3.12-slim` with a non-root `appuser` for security
-- `docker-compose.yml` uses 3 separate Dockerfiles (Dockerfile.api/worker/bot) matching the Railway 3-service layout
-- `docker-compose.yml` uses `redis://redis:6379` (non-TLS) for local dev; production uses Upstash `rediss://` TLS URL
-- SQL migrations use `IF NOT EXISTS` for idempotency
-- `email_logs.type` uses CHECK constraint: `IN ('otp', 'magic')`
-- `email_logs.status` uses CHECK constraint: `IN ('sent', 'failed', 'queued')`
+- Used `SecurityHeadersMiddleware` class (in `security.py`) added via `app.add_middleware()` instead of inline decorator — cleaner separation of concerns
+- `secure.Secure().framework.fastapi(response)` sets: Strict-Transport-Security, X-Frame-Options (SAMEORIGIN), X-XSS-Protection (0), X-Content-Type-Options (nosniff), Referrer-Policy, Cache-Control
+- `/health` always returns HTTP 200; `status` field is `"ok"` (both up) or `"degraded"` (one/both down) — never 503, so load balancers don't route away
+- `SecurityHeadersMiddleware` preserves incoming `X-Request-ID` from clients/proxies for distributed tracing
+- CI uses `--ignore-missing-imports --no-strict-optional` for mypy — sufficient for current scope
+- Added `permissions: contents: read` to both CI jobs (CodeQL/security requirement)
+- `core/config.py` `Settings()` call has `# type: ignore[call-arg]` — pydantic-settings reads from env vars, not constructor args; mypy doesn't understand this without the pydantic mypy plugin
+- Dockerfiles follow the exact template from the guide (all 3 use same base pattern, EXPOSE 3000)
 
 ## Next agent: do these first
 
 1. Set up `.env` with real credentials (Supabase, Upstash Redis, Telegram)
-2. Generate ENCRYPTION_KEY: `python -c "import secrets; print(secrets.token_hex(32))"`
-3. Generate JWT_SECRET: `python -c "import secrets; print(secrets.token_hex(64))"`
-4. Run all 7 SQL migrations in Supabase SQL Editor (001 → 007)
-5. Verify all 7 tables: `SELECT table_name FROM information_schema.tables WHERE table_schema='public'`
-6. Verify config: `python -c "from core.config import settings; print(settings.ENV)"`
-7. Begin Part 02: create `apps/api/main.py`, `apps/api/routes/health.py`, Dockerfiles, Railway deploy, GitHub Actions CI
+2. Run all 7 SQL migrations in Supabase SQL Editor (001 → 007)
+3. Deploy to Railway and confirm `/health` returns `{status:ok,db:true,redis:true}`
+4. Add `RAILWAY_TOKEN` as a GitHub Actions secret for the deploy job
+5. Optionally add `ENCRYPTION_KEY` and `JWT_SECRET` as GitHub Actions secrets (fallback defaults are in CI for tests)
+6. Begin Part 03: create `core/crypto.py`, `core/db.py`, `core/redis_client.py`, and their tests
