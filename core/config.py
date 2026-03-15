@@ -48,4 +48,4 @@ class Settings(BaseSettings):
         env_file = '.env'
 
 
-settings = Settings()   # raises at startup if any var wrong/missing
+settings = Settings()   # type: ignore[call-arg]  # pydantic-settings reads from env vars
