@@ -243,3 +243,39 @@ def test_revoke_then_verify_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match="revoked"):
         verify_jwt(token, redis_client=redis)
+
+
+# ===========================================================================
+# Part 15 additions — uncovered jwt_utils lines
+# ===========================================================================
+
+def test_revoke_malformed_jwt_raises() -> None:
+    """revoke_jwt must raise ValueError when given a malformed token string."""
+    from core.jwt_utils import revoke_jwt
+
+    fake_redis = MagicMock()
+
+    with pytest.raises(ValueError, match="malformed"):
+        revoke_jwt("this.is.not.a.valid.jwt.at.all", fake_redis)
+
+
+def test_revoke_jwt_no_jti_is_noop() -> None:
+    """revoke_jwt does nothing when the JWT payload has no jti claim."""
+    from unittest.mock import MagicMock as _MagicMock
+    from jose import jwt as jose_jwt
+    from core.jwt_utils import revoke_jwt, ALGORITHM
+
+    # Craft a token without a 'jti' claim (bypass issue_jwt which always adds one)
+    payload_without_jti = {
+        "sub": SUBJECT,
+        "iat": 1000,
+        "exp": 9999999999,
+        # intentionally no 'jti'
+    }
+    token = jose_jwt.encode(payload_without_jti, os.environ["JWT_SECRET"], algorithm=ALGORITHM)
+
+    fake_redis = _MagicMock()
+    revoke_jwt(token, fake_redis)
+
+    # set should not have been called since there is no jti to blacklist
+    fake_redis.set.assert_not_called()

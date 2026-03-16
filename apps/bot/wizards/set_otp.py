@@ -34,7 +34,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from jinja2 import Environment, TemplateSyntaxError, Undefined
+from jinja2 import Environment, TemplateSyntaxError, Undefined, select_autoescape
 from telegram import CallbackQuery, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -65,10 +65,13 @@ _SAMPLE_OTP = "483920"
 _SAMPLE_PURPOSE = "login"
 _SAMPLE_EXPIRY_MINUTES = 10
 
-# Jinja2 environment for string rendering (autoescape off for plain-text)
-# Jinja2 environment for plain-text email body rendering (autoescape intentionally off —
-# rendered output is sent as a Telegram message preview, never injected into HTML context)
-_jinja = Environment(autoescape=False, undefined=Undefined)  # noqa: S701
+# Jinja2 environment for plain-text email body rendering.  Autoescape is
+# enabled only for HTML/XML files; string templates (from_string) are not
+# autoescaped because they produce plain-text Telegram previews, not HTML.
+_jinja = Environment(  # noqa: S701
+    autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=False),
+    undefined=Undefined,
+)
 
 
 # ---------------------------------------------------------------------------

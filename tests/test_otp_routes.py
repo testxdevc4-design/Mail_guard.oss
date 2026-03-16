@@ -606,3 +606,155 @@ async def test_anti_enumeration_timing_on_validation_error(
     assert elapsed >= 0.190, (
         f"Validation-error response faster than 190 ms floor ({elapsed * 1000:.1f} ms)"
     )
+
+
+# ===========================================================================
+# Part 15 additions — coverage for uncovered otp route lines
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_send_otp_503_project_is_none(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """503 when get_project returns None (project not found)."""
+    key_row = _make_api_key()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.otp.check_key_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp.check_email_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp._get_sync_redis", lambda: object())
+    monkeypatch.setattr("apps.api.routes.otp.get_project", lambda _: None)
+
+    r = await client.post(
+        "/api/v1/otp/send",
+        json={"email": "user@example.com", "purpose": "login"},
+        headers={"Authorization": f"Bearer {_LIVE_KEY}"},
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"]["error"] == "service_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_send_otp_503_save_otp_fails(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """503 when save_otp raises an exception."""
+    key_row = _make_api_key()
+    project = _make_project()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.otp.check_key_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp.check_email_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp._get_sync_redis", lambda: object())
+    monkeypatch.setattr("apps.api.routes.otp.get_project", lambda _: project)
+    monkeypatch.setattr(
+        "apps.api.routes.otp.save_otp",
+        lambda *a: (_ for _ in ()).throw(RuntimeError("redis down")),
+    )
+
+    r = await client.post(
+        "/api/v1/otp/send",
+        json={"email": "user@example.com", "purpose": "login"},
+        headers={"Authorization": f"Bearer {_LIVE_KEY}"},
+    )
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_otp_200_with_sender_email_id(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """200 happy path when project has sender_email_id (email enqueue path)."""
+    from unittest.mock import AsyncMock
+    from core.models import EmailLog
+
+    key_row = _make_api_key()
+    project = _make_project(sender_email_id="sender-001")
+    email_log = EmailLog(
+        id="log-0001",
+        project_id=_PROJECT_ID,
+        sender_id="sender-001",
+        recipient_hash="abc",
+        purpose="login",
+        type="otp",
+        status="queued",
+        error_detail=None,
+        sent_at=NOW,
+    )
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.otp.check_key_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp.check_email_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp._get_sync_redis", lambda: object())
+    monkeypatch.setattr("apps.api.routes.otp.get_project", lambda _: project)
+    monkeypatch.setattr("apps.api.routes.otp.save_otp", lambda *a: None)
+    monkeypatch.setattr("apps.api.routes.otp.insert_email_log", lambda _: email_log)
+    monkeypatch.setattr("apps.api.routes.otp._enqueue_email", AsyncMock(return_value=None))
+
+    r = await client.post(
+        "/api/v1/otp/send",
+        json={"email": "user@example.com", "purpose": "login"},
+        headers={"Authorization": f"Bearer {_LIVE_KEY}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["sent"] is True
+
+
+@pytest.mark.asyncio
+async def test_send_otp_429_email_rate_limit_timing(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rate limited response still respects timing floor."""
+    import time
+    key_row = _make_api_key()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.otp.check_key_hourly", lambda *a: True)
+    monkeypatch.setattr("apps.api.routes.otp.check_email_hourly", lambda *a: False)
+    monkeypatch.setattr("apps.api.routes.otp._get_sync_redis", lambda: object())
+
+    t0 = time.monotonic()
+    r = await client.post(
+        "/api/v1/otp/send",
+        json={"email": "user@example.com", "purpose": "login"},
+        headers={"Authorization": f"Bearer {_LIVE_KEY}"},
+    )
+    elapsed = time.monotonic() - t0
+    assert r.status_code == 429
+    assert elapsed >= 0.190
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_500_unknown_error(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """500 when verify_and_consume returns an unrecognised error code."""
+    key_row = _make_api_key()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr(
+        "apps.api.routes.otp.verify_and_consume",
+        lambda *a: {"verified": False, "error": "unknown_weird_error"},
+    )
+
+    r = await client.post(
+        "/api/v1/otp/verify",
+        json={"email": "user@example.com", "code": "000000"},
+        headers={"Authorization": f"Bearer {_LIVE_KEY}"},
+    )
+    assert r.status_code == 500
+
+
+def test_get_sync_redis_lazy_init() -> None:
+    """_get_sync_redis returns a cached client on second call."""
+    import apps.api.routes.otp as otp_mod
+
+    # Reset the cached client
+    original = otp_mod._sync_redis_client
+    otp_mod._sync_redis_client = None
+
+    try:
+        mock_redis = object()
+        # Patch the module-level sync_redis_lib
+        otp_mod.sync_redis_lib.from_url = lambda *a, **kw: mock_redis  # type: ignore[assignment]
+        client1 = otp_mod._get_sync_redis()
+        client2 = otp_mod._get_sync_redis()
+        assert client1 is client2  # Same object (lazy init)
+        assert client1 is mock_redis
+    finally:
+        otp_mod._sync_redis_client = original
