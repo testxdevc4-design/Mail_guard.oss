@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
-from apps.api.routes import health
+from apps.api.routes import health, otp
 from apps.api.middleware.rate_limit import RateLimitMiddleware
 from apps.api.middleware.security import SecurityHeadersMiddleware
 
@@ -26,6 +26,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitMiddleware)
 
     app.include_router(health.router, tags=["System"])
+    app.include_router(otp.router)
 
     return app
 
