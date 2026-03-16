@@ -188,7 +188,10 @@ async def send_magic_link(
             )
         )
 
-    return JSONResponse(content={"status": "sent"})
+    return JSONResponse(content={
+        "status": "sent",
+        "expires_in": settings.MAGIC_LINK_EXPIRY_MINUTES * 60,
+    })
 
 @router.get("/verify/{token}", response_class=HTMLResponse)
 async def verify_magic_link_route(token: str) -> HTMLResponse:
