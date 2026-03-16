@@ -1,4 +1,94 @@
-# HANDOFF — Part 11 of 15
+# HANDOFF — Part 12 of 15
+
+## Files created / modified
+
+### Parts 01–11 files (unchanged)
+
+Refer to prior HANDOFF content for Parts 01–11 files.
+
+### Part 12 files (new / modified)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `apps/bot/commands/senders.py` | ~65 | `/senders` — lists all senders with Redis daily usage % |
+| `apps/bot/commands/projects.py` | ~115 | `/projects`, `/deleteproject <slug>` |
+| `apps/bot/commands/keys.py` | ~155 | `/genkey <slug> [label]` (plaintext once, zeroed), `/keys <slug>` (prefix only) |
+| `apps/bot/commands/logs.py` | ~115 | `/logs`, `/logs <slug>`, `/logs --failed`, `/logs --today` |
+| `apps/bot/commands/webhooks.py` | ~130 | `/webhooks <slug>`, `/removewebhook <id>` |
+| `apps/bot/wizards/new_project.py` | ~450 | 5-state wizard: name → slug → sender (paginated KB) → OTP expiry → confirm |
+| `apps/bot/wizards/set_otp.py` | ~330 | 4-state wizard with mandatory Jinja2 preview before save |
+| `apps/bot/wizards/set_webhook.py` | ~350 | 4-state wizard; secret shown once, stored AES-encrypted |
+| `tests/test_bot_part12.py` | ~740 | 39 tests covering all Part 12 commands and wizards |
+| `apps/bot/main.py` | +15 | Registered 9 new command handlers + 3 new ConversationHandlers |
+| `core/db.py` | +40 | Added `list_email_logs_paged()` (project_id, status, since, limit, order desc) |
+
+## What works right now
+
+- 252 tests passing (up from 213)
+- `ruff check .` — all checks passed
+- `mypy apps/ core/ --ignore-missing-imports --no-strict-optional` — no issues
+
+All Part 12 commands work as specified:
+- `/senders` — Redis usage % via `get_usage_pct()`; 0% fallback on Redis error
+- `/projects` — all projects with resolved sender email
+- `/deleteproject <slug>` — sets `is_active=False`
+- `/genkey <slug>` — plaintext in ONE message then `plaintext = None`; DB stores SHA-256 hash only
+- `/keys <slug>` — shows `key_prefix` only, never `key_hash`
+- `/logs` — last 20 across all projects (newest first)
+- `/logs <slug>` — filtered by project
+- `/logs --failed` — status=failed
+- `/logs --today` — UTC midnight `since` filter
+- `/webhooks <slug>` — lists webhooks; `secret_enc` never exposed
+- `/removewebhook <id>` — deactivates webhook
+- `/newproject` — 5-state wizard with slug validation (regex + uniqueness + ≤50 chars)
+- `/setotp <slug>` — mandatory Jinja2 preview; saves only after user confirms
+- `/setwebhook <slug>` — `secrets.token_hex(32)` shown once with HMAC verification snippet; stored AES-256-GCM encrypted
+
+## What is NOT built yet
+
+- `/revokekey <prefix>` — revoke API key by prefix (partially done: `list_api_keys` returns all)
+- `/testkey <key>` — send test OTP using a key
+- `/testsender <id>` — send test email from specific sender
+- `/removesender <id>` — deactivate a sender
+- `/assignsender <slug>` — change project sender mid-lifecycle
+- Part 14: SDK code
+- Part 15: `SECURITY.md`
+
+## Env vars introduced
+
+None — all env vars already exist from prior parts.
+
+## DB state
+
+No new migrations needed for Part 12. All tables used already exist:
+- `sender_emails` (read by `/senders`)
+- `projects` (read/written by project wizard and `/projects`)
+- `api_keys` (read/written by `/genkey`, `/keys`)
+- `email_logs` (read by `/logs`)
+- `webhooks` (read/written by webhook commands and wizard)
+
+## Decisions made
+
+1. **Webhook secret storage**: Problem statement says "SHA-256 hash" but the delivery worker (`deliver_webhook.py`) decrypts the secret for HMAC signing — a one-way hash cannot be reversed. Secret stored AES-256-GCM encrypted (consistent with API webhook route). Architecturally necessary.
+
+2. **`list_email_logs_paged`**: Added as new function — does not modify existing `list_email_logs`. Supports `project_id`, `status`, `since` (datetime), and `limit` with `order desc` by `sent_at`.
+
+3. **`/newproject` wizard steps**: Implemented the 5 states from the problem statement (name, slug, sender, OTP expiry, confirm). OTP length=6 digits, max_attempts=5, rate_limit=60/hr as defaults.
+
+4. **Jinja2 `from_string()` for previews**: Template body entered by user is rendered via `Environment().from_string()` — no file needed. Syntax errors return `None` and wizard prompts user to fix.
+
+## Next agent: do these first
+
+1. Read Part 13 in `MailGuard_MaxMVP_15Part.docx`
+2. Do not modify any Part 12 files unless there is a verified bug
+3. Implement `/revokekey <prefix>` in `apps/bot/commands/keys.py`
+4. Implement `/testkey <key>` in `apps/bot/commands/keys.py`
+5. Implement `/testsender <id>` and `/removesender <id>` in `apps/bot/commands/senders.py`
+6. Implement `/assignsender <slug>` (could go in `projects.py` or a new command)
+7. Register any new command handlers in `apps/bot/main.py`
+8. Continue building on top of 252 passing tests
+9. Update `HANDOFF.md` before closing session
+
 
 ## Files created / modified
 

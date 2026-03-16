@@ -486,6 +486,42 @@ def list_email_logs(
     return [_row_to_email_log(r) for r in res.data]
 
 
+def list_email_logs_paged(
+    project_id: Optional[str] = None,
+    status: Optional[str] = None,
+    since: Optional[datetime] = None,
+    limit: int = 20,
+) -> List[EmailLog]:
+    """Return email_logs ordered newest-first with optional filters.
+
+    Parameters
+    ----------
+    project_id:
+        Filter to a specific project UUID.
+    status:
+        Filter by delivery status (e.g. ``"sent"`` or ``"failed"``).
+    since:
+        Only return rows with ``sent_at >= since``.
+    limit:
+        Maximum number of rows to return (default 20).
+    """
+    q = (
+        get_client()
+        .table("email_logs")
+        .select("*")
+        .order("sent_at", desc=True)
+        .limit(limit)
+    )
+    if project_id is not None:
+        q = q.eq("project_id", project_id)
+    if status is not None:
+        q = q.eq("status", status)
+    if since is not None:
+        q = q.gte("sent_at", since.isoformat())
+    res = q.execute()
+    return [_row_to_email_log(r) for r in res.data]
+
+
 def update_email_log(log_id: str, data: Dict[str, Any]) -> EmailLog:
     res = (
         get_client()
