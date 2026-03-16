@@ -26,6 +26,7 @@ import httpx
 
 from core.config import settings
 from core.db import get_sender_email, update_email_log
+from core.sender_rotation import increment_sender_usage
 from core.smtp import send_email
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,15 @@ async def task_send_email(
                 text_body=text_body,
                 html_body=html_body,
             )
-            # Success — update log and return.
+            # Success — update log, track usage, and return.
             update_email_log(email_log_id, {"status": "delivered"})
+            try:
+                await increment_sender_usage(sender_id)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "task_send_email: failed to increment sender usage sender_id=%s",
+                    sender_id,
+                )
             logger.info(
                 "task_send_email: delivered email_log_id=%s attempt=%d",
                 email_log_id,
