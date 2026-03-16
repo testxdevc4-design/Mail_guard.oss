@@ -79,7 +79,7 @@ class MagicLink:
     email_hash: str
     token_hash: str
     purpose: str
-    redirect_url: str
+    redirect_url: Optional[str]
     is_used: bool
     expires_at: datetime
     created_at: datetime
