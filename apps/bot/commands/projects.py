@@ -123,3 +123,58 @@ async def delete_project_command(
         f"\u2705 Project *{slug}* deactivated.",
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+async def activateproject_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /activateproject <slug> — re-activate a project."""
+    if update.message is None:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: /activateproject <slug>\n\n"
+            "Provide the project slug to re-activate (visible in /projects)."
+        )
+        return
+
+    slug = args[0].strip()
+
+    try:
+        project = get_project_by_slug(slug)
+    except Exception as exc:
+        logger.error("activateproject_command: DB error: %s", type(exc).__name__)
+        await update.message.reply_text(
+            "\u274c Database error. Please try again."
+        )
+        return
+
+    if project is None:
+        await update.message.reply_text(
+            f"\u274c Project *{slug}* not found.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    if project.is_active:
+        await update.message.reply_text(
+            f"Project *{slug}* is already active.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    try:
+        update_project(project.id, {"is_active": True})
+    except Exception as exc:
+        logger.error("activateproject_command: update error: %s", type(exc).__name__)
+        await update.message.reply_text(
+            "\u274c Could not activate project. Please try again."
+        )
+        return
+
+    await update.message.reply_text(
+        f"\u2705 Project *{slug}* activated.",
+        parse_mode=ParseMode.MARKDOWN,
+    )

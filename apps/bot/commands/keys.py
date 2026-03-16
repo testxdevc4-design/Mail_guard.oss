@@ -25,8 +25,8 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from apps.bot.formatters import format_table
-from core.api_keys import generate_api_key
-from core.db import get_project_by_slug, list_api_keys
+from core.api_keys import generate_api_key, revoke_api_key
+from core.db import get_api_key, get_project_by_slug, list_api_keys
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +174,55 @@ async def keys_command(
         f"*API Keys — {project.name}* ({len(active_keys)} active)\n\n{table}",
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+async def revokekey_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /revokekey <key_id> — revoke an API key by its UUID.
+
+    The key is deactivated (is_active=False) and cannot be used for new requests.
+    """
+    if update.message is None:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: /revokekey <key_id>\n\n"
+            "Provide the UUID of the API key to revoke (visible in /keys <slug>)."
+        )
+        return
+
+    key_id = args[0].strip()
+
+    try:
+        key = get_api_key(key_id)
+    except Exception as exc:
+        logger.error("revokekey_command: DB error: %s", type(exc).__name__)
+        await update.message.reply_text(
+            "\u274c Database error. Please try again."
+        )
+        return
+
+    if key is None:
+        await update.message.reply_text(
+            f"\u274c API key *{key_id}* not found.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    try:
+        revoke_api_key(key.id)
+    except Exception as exc:
+        logger.error("revokekey_command: revoke error: %s", type(exc).__name__)
+        await update.message.reply_text(
+            "\u274c Could not revoke API key. Please try again."
+        )
+        return
+
+    await update.message.reply_text(
+        f"\u2705 API key *{key.key_prefix}…* revoked.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    logger.info("revokekey_command: key revoked id=%s", key.id)

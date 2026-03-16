@@ -19,9 +19,9 @@ import logging
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, TypeHandler
 
-from apps.bot.commands.keys import genkey_command, keys_command
+from apps.bot.commands.keys import genkey_command, keys_command, revokekey_command
 from apps.bot.commands.logs import logs_command
-from apps.bot.commands.projects import delete_project_command, projects_command
+from apps.bot.commands.projects import activateproject_command, delete_project_command, projects_command
 from apps.bot.commands.senders import senders_command
 from apps.bot.commands.start import start_command
 from apps.bot.commands.webhooks import remove_webhook_command, webhooks_command
@@ -67,8 +67,10 @@ def build_application() -> Application:  # type: ignore[type-arg]
     app.add_handler(CommandHandler("senders", senders_command))
     app.add_handler(CommandHandler("projects", projects_command))
     app.add_handler(CommandHandler("deleteproject", delete_project_command))
+    app.add_handler(CommandHandler("activateproject", activateproject_command))
     app.add_handler(CommandHandler("genkey", genkey_command))
     app.add_handler(CommandHandler("keys", keys_command))
+    app.add_handler(CommandHandler("revokekey", revokekey_command))
     app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("webhooks", webhooks_command))
     app.add_handler(CommandHandler("removewebhook", remove_webhook_command))

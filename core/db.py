@@ -224,6 +224,20 @@ def insert_api_key(data: Dict[str, Any]) -> ApiKey:
     return _row_to_api_key(res.data[0])
 
 
+def get_api_key(key_id: str) -> Optional[ApiKey]:
+    res = (
+        get_client()
+        .table("api_keys")
+        .select("*")
+        .eq("id", key_id)
+        .maybe_single()
+        .execute()
+    )
+    if res.data is None:
+        return None
+    return _row_to_api_key(res.data)
+
+
 def get_api_key_by_hash(key_hash: str) -> Optional[ApiKey]:
     res = (
         get_client()

@@ -7,7 +7,6 @@ type coverage with a single import::
     from mailguard import OtpSendResult, OtpVerifyResult
 """
 
-from typing import Optional
 from typing import TypedDict
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1191,7 +1192,7 @@ class TestLogsCommandPart15:
 
         with (
             patch("apps.bot.commands.logs.get_project_by_slug", return_value=project),
-            patch("apps.bot.commands.logs.list_email_logs_paged", return_value=([log], None)),
+            patch("apps.bot.commands.logs.list_email_logs_paged", return_value=[log]),
         ):
             await logs_command(update, ctx)
 
@@ -1230,7 +1231,7 @@ class TestSupabasePersistenceSession:
         """_db_load returns the stored value from bot_sessions."""
         from apps.bot.session import _db_load
 
-        mock_client = self._make_client(value={"foo": "bar"})
+        mock_client = self._make_client(value={"value": {"foo": "bar"}})
         with patch("apps.bot.session.get_client", return_value=mock_client):
             result = _db_load("conversations")
         assert result == {"foo": "bar"}
