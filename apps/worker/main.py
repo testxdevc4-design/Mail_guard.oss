@@ -4,6 +4,7 @@ apps/worker/main.py — ARQ WorkerSettings for MailGuard OSS.
 Registers:
   - ``task_send_email``   (ad-hoc enqueued task)
   - ``purge_expired_otps`` (cron every 15 minutes)
+  - ``rotation_check``    (cron every 60 minutes)
 
 Start the worker with:
     arq apps.worker.main.WorkerSettings
@@ -14,6 +15,7 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from apps.worker.tasks.purge_otps import purge_expired_otps
+from apps.worker.tasks.rotation_check import rotation_check
 from apps.worker.tasks.send_email import task_send_email
 from apps.worker.tasks.deliver_webhook import task_deliver_webhook
 from core.config import settings
@@ -74,6 +76,7 @@ class WorkerSettings:
 
     cron_jobs = [
         cron(purge_expired_otps, minute={0, 15, 30, 45}),
+        cron(rotation_check, minute=0),  # every 60 minutes
     ]
 
     # Keep jobs alive for up to 10 minutes to handle the 300 s final backoff.

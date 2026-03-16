@@ -1,8 +1,8 @@
-# HANDOFF — Part 09 of 15
+# HANDOFF — Part 10 of 15
 
 ## Files created / modified
 
-### Parts 01–08 files (unchanged or only fire_event additions)
+### Parts 01–09 files (unchanged)
 
 | File | Lines | Description |
 |------|-------|-------------|
@@ -13,73 +13,65 @@
 | `core/smtp.py` | ~100 | Async SMTP email delivery |
 | `core/templates.py` | ~135 | Jinja2 email + HTML page rendering |
 | `core/magic_links.py` | ~125 | Magic link creation and single-use verification |
-| `apps/api/routes/otp.py` | +20 | Added `fire_event` calls for `otp.sent` and `otp.verified` |
-| `apps/api/routes/magic.py` | +30 | Added `fire_event` calls for `magic_link.sent` and `magic_link.verified`; pre-lookup of `project_id` by token hash for verified event |
+| `core/webhooks.py` | ~95 | HMAC-SHA256 webhook signing and event dispatch |
+| `apps/api/routes/webhooks.py` | ~135 | Webhook registration, list, deactivate |
+| `apps/worker/tasks/deliver_webhook.py` | ~170 | ARQ task: 3 attempts, 10s/60s/300s backoff |
 
-### Part 09 files (new)
+### Part 10 files (new / modified)
 
 | File | Lines | Description |
 |------|-------|-------------|
-| `core/webhooks.py` | ~95 | `sign_payload(secret, payload)` — HMAC-SHA256, `sort_keys=True`, returns `sha256={hex}`. `fire_event(project_id, event, payload)` — looks up active subscribed webhooks, enqueues one ARQ job per endpoint. |
-| `apps/api/routes/webhooks.py` | ~135 | `POST /api/v1/webhooks` (register), `GET /api/v1/webhooks` (list), `DELETE /api/v1/webhooks/{id}` (deactivate). Secret generated with `secrets.token_hex(32)`, returned once, stored AES-encrypted. |
-| `apps/worker/tasks/deliver_webhook.py` | ~170 | ARQ task: 3 attempts, 10s/60s/300s backoff, 10s aiohttp timeout. `X-MailGuard-Signature: sha256={hex}` header. Telegram alert on permanent failure. |
-| `apps/api/schemas.py` | +35 | Added `WebhookCreateRequest` and `WebhookResponse` |
-| `apps/api/main.py` | +2 | `app.include_router(webhooks.router)` after magic router |
-| `apps/worker/main.py` | +2 | Added `task_deliver_webhook` to worker functions list |
-| `tests/test_webhooks.py` | ~770 | 21 tests covering all required cases |
+| `core/sender_rotation.py` | ~200 | `increment_sender_usage()`, `get_usage_pct()`, `select_best_sender()`, `check_and_rotate()` |
+| `apps/worker/tasks/rotation_check.py` | ~50 | ARQ cron: iterates active projects, calls `check_and_rotate()` |
+| `apps/worker/main.py` | +3 | Added `rotation_check` cron (every 60 min), added import |
+| `apps/worker/tasks/send_email.py` | +5 | Calls `increment_sender_usage()` after successful delivery (try/except so Redis failure doesn't affect delivery) |
+| `tests/test_sender_rotation.py` | ~340 | 18 tests covering all required cases |
 
 ## What works right now
 
 ```bash
-# 167 tests pass (146 from Parts 01–08, 21 new)
+# 185 tests pass (167 from Parts 01–09, 18 new)
 pytest tests/ -v
-# → 167 passed, 0 failed
+# → 185 passed, 0 failed
 
 # CodeQL: 0 alerts
 ```
 
 ## Security guarantees implemented
 
-### From Parts 01–08
+### From Parts 01–09
 - OTP codes: CSPRNG, bcrypt hash (cost 10), attempt counter before hash check
 - JWT: unique `jti`, Redis revocation, HS256
 - API key: 256-bit entropy, SHA-256 hash stored only, sandbox-first check
 - Magic link: 256-bit raw token, SHA-256 hash stored only, single-use atomic
 - SMTP password: zeroed in `finally`, never logged
 - Rate limiter: atomic Redis pipeline, 5 tiers
+- Webhook secret: `secrets.token_hex(32)` — 256-bit, returned once; stored AES-256-GCM encrypted
 
-### New in Part 09
-- Webhook secret: `secrets.token_hex(32)` — 256-bit, returned once in registration response
-- **Secret stored AES-256-GCM encrypted** in `webhooks.secret_enc` — never plaintext
-- HMAC-SHA256 signature: `sort_keys=True` + compact separators — deterministic regardless of key insertion order
-- `X-MailGuard-Signature: sha256={hex}` on every delivery — developer can verify with HMAC-SHA256
-- Delivery timeout: 10-second `aiohttp.ClientTimeout` — worker never hangs indefinitely
-- fire_event wrapped in `asyncio.create_task()` in routes — webhook failure never delays API response
-- One failed delivery never blocks other endpoints — each ARQ job is independent
+### New in Part 10
+- Sender daily counters stored in Redis with TTL-based expiry (86400 s from first use)
+- INCR + EXPIRE in the same pipeline — no key left without TTL on crash
+- Rotation fallback: lowest-usage sender returned even when all are above threshold
+- `increment_sender_usage()` wrapped in try/except in `send_email.py` — Redis failure never blocks delivery
 
-## Webhook signature verification
+## Rotation design decisions
 
-Developers verify the `X-MailGuard-Signature` header with:
-
-```python
-import hashlib, hmac, json
-
-def verify_webhook(raw_secret: str, payload: dict, header: str) -> bool:
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    expected = hmac.new(raw_secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(f"sha256={expected}", header)
-```
+- Redis key pattern: `sender:daily:{sender_id}` — TTL 86400 s set on every INCR (not a fixed midnight reset)
+- Threshold from `settings.ROTATION_THRESHOLD` (default 0.80)
+- `select_best_sender()` never returns `None` when at least one active sender exists
+- `check_and_rotate()` only updates Supabase if it actually switches to a different sender
+- Telegram alert contains: project slug, old sender address, new sender address, old sender usage %
+- `increment_sender_usage()` failure is logged but does not abort the successful email delivery
 
 ## What is NOT built yet
 
-- `core/sender_rotation.py` — Auto sender rotation (Part 10)
 - All SDK code — Part 14
 - All bot commands — Parts 11–13
 - `SECURITY.md` — Part 15
 
 ## Env vars introduced
 
-No new env vars in Part 09.
+No new env vars in Part 10 (`ROTATION_THRESHOLD` already existed in `core/config.py`).
 
 ## DB state
 
@@ -87,31 +79,24 @@ No new env vars in Part 09.
 - `webhooks` table must have: `id`, `project_id`, `url`, `secret_enc`, `events` (text[]), `is_active`, `failure_count`, `last_triggered_at`, `created_at`
 - `magic_links` table `used_at TIMESTAMPTZ` column must exist (from Part 08)
 
-## Decisions made
-
-- Webhook secret stored as AES-256-GCM encrypted (not SHA-256 hash) so the worker can decrypt and use it for HMAC signing at delivery time
-- `fire_event()` uses `asyncio.to_thread` for the sync DB lookup (consistent with rest of codebase)
-- `magic_link.verified` route does a pre-lookup of the magic link row by token hash to resolve `project_id` before calling `verify_magic_link` — this adds one DB read but is the only way to get `project_id` without modifying core files
-- `_BACKOFF_DELAYS = (10, 60, 300)` — only first 2 values used as inter-attempt delays; the third is documented as reserved
-
 ## Test results
 
 ```
-pytest tests/test_webhooks.py   → 21 passed, 0 failed
-pytest tests/                   → 167 passed, 0 failed
-CodeQL                          → 0 alerts
+pytest tests/test_sender_rotation.py  → 18 passed, 0 failed
+pytest tests/                         → 185 passed, 0 failed
+CodeQL                                → 0 alerts
 ```
 
 ## Known issues
 
 - Real end-to-end webhook delivery (HTTP POST to external endpoint) not confirmed in CI (no live endpoint)
-- `magic_link.verified` project_id lookup fires one extra DB read per verify call — acceptable for correctness
 - `email_logs.status` CHECK constraint issue from Part 06 still unresolved
+- Manual rotation test (Supabase + Telegram) not confirmed — no live environment available in CI
 
-## Next agent: do these first (Part 10)
+## Next agent: do these first (Part 11)
 
-1. Read Part 10 in `MailGuard_MaxMVP_15Part.docx` — understand sender rotation spec
-2. Create `core/sender_rotation.py` — auto rotation logic
-3. Write tests — zero failures
-4. Update `HANDOFF.md` with Part 10 results and Part 11 checklist
+1. Read Part 11 in `MailGuard_MaxMVP_15Part.docx` — understand the next part's spec
+2. Do not modify `core/sender_rotation.py` unless there is a verified bug
+3. Continue building on top of the 185 passing tests
+4. Update `HANDOFF.md` with Part 11 results and Part 12 checklist
 
