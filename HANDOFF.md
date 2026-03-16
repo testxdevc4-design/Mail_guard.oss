@@ -1,4 +1,145 @@
-# HANDOFF — Part 06 of 15
+# HANDOFF — Part 08 of 15
+
+## Files created / modified
+
+### Part 04 files (unchanged)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `core/otp.py` | ~110 | Full OTP lifecycle: `generate_otp`, `hash_otp`, `verify_otp_hash`, `save_otp`, `verify_and_consume` |
+| `core/jwt_utils.py` | ~100 | HS256 JWT: `issue_jwt` (unique `jti`), `verify_jwt` (Redis revocation check), `revoke_jwt` |
+| `core/rate_limiter.py` | ~80 | 5-tier Redis sliding window: atomic pipeline (`zremrangebyscore`+`zadd`+`zcard`+`expire`) |
+
+### Part 05 files (unchanged)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `core/api_keys.py` | ~115 | `generate_api_key` (256-bit entropy, SHA-256 hash stored), `validate_api_key` (sandbox block first), `revoke_api_key` |
+| `apps/api/middleware/auth.py` | ~50 | `require_api_key` FastAPI dependency — Bearer extraction + `validate_api_key` |
+| `apps/api/middleware/rate_limit.py` | ~70 | `RateLimitMiddleware` — IP 15-min tier, `asyncio.to_thread`, fail-open, 429 + `retry_after` |
+| `apps/api/middleware/security_headers.py` | ~45 | `SecurityHeadersMiddleware` — explicit 4-header setter |
+
+### Part 06 files (unchanged)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `core/smtp.py` | ~100 | Async email dispatch via `aiosmtplib`. Password zeroed in `finally`. `use_tls=True` always. |
+| `core/templates.py` | ~135 | Jinja2 rendering for OTP and magic-link emails + magic_verified/magic_expired pages. |
+| `apps/worker/tasks/send_email.py` | ~140 | ARQ task: 3 retry attempts, backoffs 10 s/60 s/300 s. |
+| `apps/worker/main.py` | ~70 | `WorkerSettings` — registers tasks and cron. |
+
+### Part 07 files (unchanged)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `apps/api/routes/otp.py` | ~297 | `POST /otp/send` and `POST /otp/verify`. Anti-enumeration 200 ms floor. |
+| `apps/api/schemas.py` | ~49 | OTP schemas (Part 07) + magic link schemas (Part 08). |
+| `tests/test_otp_routes.py` | ~510 | 25 OTP route tests. |
+
+### Part 08 files (new / modified)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `core/models.py` | ~112 | Fixed `MagicLink.redirect_url` to `Optional[str]` |
+| `core/magic_links.py` | ~125 | `create_magic_link` (secrets.token_urlsafe(32), SHA-256 hash only in DB, raw token returned once), `verify_magic_link` (single-use: `is_used=True`+`used_at=now()` atomic before JWT) |
+| `apps/api/schemas.py` | +20 | Added `MagicLinkSendRequest`, `MagicLinkVerifyResponse` |
+| `core/templates.py` | +35 | Added `render_magic_verified_page`, `render_magic_expired_page` |
+| `templates/magic_verified.html` | ~35 | Success page. Meta refresh redirect after 2 s if `redirect_url` set. JWT embedded in `<meta name="x-token">`. Works without JavaScript. |
+| `templates/magic_expired.html` | ~25 | Error page for expired/used/invalid tokens. Works without JavaScript. |
+| `apps/api/routes/magic.py` | ~230 | `POST /api/v1/magic/send` (API key auth, email validation, create link, enqueue email). `GET /api/v1/magic/verify/{token}` (no auth, HTML response, 200 verified or 410 expired). Webhook `try/except ImportError` guard. |
+| `apps/api/main.py` | +2 | `app.include_router(magic.router)` after OTP router |
+| `tests/test_magic_routes.py` | ~290 | 11 tests covering all required cases |
+
+## What works right now
+
+```bash
+# 146 tests pass (135 from Parts 01-07, 11 new)
+pytest tests/ -v
+# → 146 passed, 0 failed
+
+# Lint clean
+ruff check .
+# → All checks passed!
+
+# Types clean
+mypy apps/ core/ --ignore-missing-imports --no-strict-optional
+# → Success: no issues found in 32 source files
+
+# CodeQL: 0 alerts
+```
+
+## Security guarantees implemented
+
+### From Parts 01–07
+- OTP codes: `secrets.randbelow(10 ** length)` — CSPRNG, never `random.randint()`
+- OTP hashing: `bcrypt.hashpw` (cost 10) — constant-time compare
+- Attempt counter incremented **before** hash check — prevents timing oracle
+- JWT `jti`: `secrets.token_hex(16)` — unique per token, enables revocation
+- Rate limiter pipeline is atomic — no race between `zremrangebyscore`/`zadd`/`zcard`
+- API key entropy: `secrets.token_hex(32)` — 256-bit, never `uuid4()`
+- Key storage: **only SHA-256 hash** written to Supabase — plaintext never stored
+- Sandbox block: `mg_test_` key in `ENV=production` → `HTTP 403` checked **before** DB lookup
+- SMTP password: decrypted inside `try/finally`, `password = None` in `finally`
+
+### New in Part 08
+- Magic link raw token: `secrets.token_urlsafe(32)` — 256-bit URL-safe entropy
+- **Only SHA-256 hex digest stored in DB** — raw token never persisted, returned once
+- **Single-use enforced atomically**: `is_used=True` and `used_at=now()` set in one DB update call *before* JWT is issued — prevents replay attacks
+- JWT uses same `issue_jwt()` from `core/jwt_utils.py` — no separate implementation
+- Webhook import guarded with `try/except ImportError` — never crashes if Part 09 not yet built
+- HTML verify pages work without JavaScript — accessible via any email client
+
+## What is NOT built yet
+
+- `core/webhooks.py` — HMAC-signed webhook delivery (Part 09)
+- `core/sender_rotation.py` — Auto sender rotation (Part 10)
+- All remaining API route files — Parts 09–10
+- All SDK code — Part 14
+- All bot commands — Parts 11–13
+- `SECURITY.md` — Part 15
+
+## Env vars introduced
+
+No new env vars in Part 08. `MAGIC_LINK_EXPIRY_MINUTES` already existed in `core/config.py` (default: 15).
+
+## DB state
+
+- 7 migration files still pending manual run in Supabase SQL Editor (001 → 007)
+- `magic_links` table needs a `used_at TIMESTAMPTZ` column if not already present — `update_magic_link` sends `used_at` in the update payload; it is silently ignored by Supabase if the column doesn't exist but must be present in production
+- `email_logs.status` CHECK constraint issue from Part 06 is still unresolved — Part 09 should reconcile
+
+## Decisions made
+
+- `verify_magic_link` takes only `token` (not `project_id`) — token is 256-bit globally unique; no project filter needed
+- Magic link URL is constructed from `request.base_url` in the route — no dependency on `INTERNAL_API_URL`
+- `render_magic_verified_page` and `render_magic_expired_page` added to `core/templates.py` to match the existing pattern (same Jinja2 `_env` singleton)
+- JWT embedded in HTML as `<meta name="x-token" content="...">` — readable without JavaScript
+
+## Test results
+
+```
+pytest tests/test_magic_routes.py   → 11 passed, 0 failed
+pytest tests/                       → 146 passed, 0 failed
+ruff check .                        → All checks passed!
+mypy apps/ core/ ...                → Success: no issues found in 32 source files
+CodeQL                              → 0 alerts
+```
+
+## Known issues
+
+- Real end-to-end email delivery (send → click → browser) not tested in CI (no live SMTP credentials)
+- `magic_links` table `used_at` column must exist in Supabase for production use — add to migration if missing
+- `email_logs.status` CHECK constraint issue from Part 06 unresolved
+
+## Next agent: do these first (Part 09)
+
+1. Read Part 09 in `MailGuard_MaxMVP_15Part.docx` — understand webhook spec
+2. Create `core/webhooks.py` — HMAC-SHA256 signed webhook delivery, `fire_event(project_id, event, payload)`
+3. The `try/except ImportError` guards in `apps/api/routes/magic.py` and `apps/api/routes/otp.py` will automatically pick up `fire_event` once `core/webhooks.py` exists
+4. Create webhook management routes (register, list, delete, test)
+5. Write tests — zero failures
+6. Update `HANDOFF.md` with Part 09 results and Part 10 checklist
+
 
 ## Files created / modified
 

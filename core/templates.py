@@ -15,6 +15,7 @@ time and is shared for all subsequent calls.
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -94,3 +95,28 @@ def render_magic_link_email(
     text_body = _env.get_template("magic_link_email.txt").render(**ctx)
     html_body = _env.get_template("magic_link_email.html").render(**ctx)
     return subject, text_body, html_body
+
+
+def render_magic_verified_page(
+    jwt_token: str,
+    redirect_url: Optional[str] = None,
+) -> str:
+    """Render the magic_verified.html page for a successful verification.
+
+    Parameters
+    ----------
+    jwt_token:
+        The signed JWT issued after successful verification.
+    redirect_url:
+        Optional URL to redirect the user to after 2 seconds.
+        If ``None``, no redirect is shown.
+    """
+    return _env.get_template("magic_verified.html").render(
+        jwt_token=jwt_token,
+        redirect_url=redirect_url,
+    )
+
+
+def render_magic_expired_page() -> str:
+    """Render the magic_expired.html page for invalid/expired/used tokens."""
+    return _env.get_template("magic_expired.html").render()

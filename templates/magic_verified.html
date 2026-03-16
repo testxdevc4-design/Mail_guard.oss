@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign-in Verified</title>
+  {% if redirect_url %}
+  <meta http-equiv="refresh" content="2; url={{ redirect_url }}" />
+  {% endif %}
+  <meta name="x-token" content="{{ jwt_token }}" />
+  <style>
+    body { margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif; }
+    .container { max-width: 480px; margin: 80px auto; background: #fff; border-radius: 8px; padding: 48px 40px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h1 { font-size: 24px; color: #111827; margin: 0 0 16px 0; }
+    p { font-size: 15px; color: #6b7280; line-height: 1.6; margin: 0 0 12px 0; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">✅</div>
+    <h1>You're signed in!</h1>
+    {% if redirect_url %}
+    <p>Verification successful. You will be redirected in <strong>2 seconds</strong>.</p>
+    <p><a href="{{ redirect_url }}">Click here if not redirected automatically.</a></p>
+    {% else %}
+    <p>Verification successful. You may close this window.</p>
+    {% endif %}
+  </div>
+</body>
+</html>
