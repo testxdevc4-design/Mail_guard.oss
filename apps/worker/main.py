@@ -15,6 +15,7 @@ from arq.connections import RedisSettings
 
 from apps.worker.tasks.purge_otps import purge_expired_otps
 from apps.worker.tasks.send_email import task_send_email
+from apps.worker.tasks.deliver_webhook import task_deliver_webhook
 from core.config import settings
 
 
@@ -69,7 +70,7 @@ class WorkerSettings:
 
     redis_settings = _parse_redis_settings()
 
-    functions = [task_send_email]
+    functions = [task_send_email, task_deliver_webhook]
 
     cron_jobs = [
         cron(purge_expired_otps, minute={0, 15, 30, 45}),

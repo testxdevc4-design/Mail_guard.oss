@@ -6,7 +6,7 @@ route signatures are not permitted.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -74,3 +74,32 @@ class MagicLinkVerifyResponse(BaseModel):
     verified: bool
     token: str
     link_id: str
+
+
+# ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+class WebhookCreateRequest(BaseModel):
+    """POST /api/v1/webhooks — request body."""
+
+    url: str
+    events: List[str]
+
+
+class WebhookResponse(BaseModel):
+    """Webhook endpoint record returned in list/create responses.
+
+    The ``secret`` field is only present in the registration response and is
+    never returned again — the database stores only the encrypted form.
+    """
+
+    id: str
+    project_id: str
+    url: str
+    events: List[str]
+    is_active: bool
+    failure_count: int
+    last_triggered_at: Optional[str] = None
+    created_at: str
+    secret: Optional[str] = None  # shown once at registration only
