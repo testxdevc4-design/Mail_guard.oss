@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign-in successful</title>
+  {% if redirect_url %}
+  <meta http-equiv="refresh" content="2; url={{ redirect_url }}" />
+  {% endif %}
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background-color: #f4f4f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 8px;
+      max-width: 480px;
+      width: 100%;
+      padding: 48px 40px;
+      text-align: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    .icon {
+      font-size: 48px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 24px;
+      color: #111827;
+      margin-bottom: 12px;
+    }
+    p {
+      font-size: 15px;
+      color: #6b7280;
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .redirect-notice {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-top: 8px;
+    }
+    .redirect-link {
+      color: #2563eb;
+      text-decoration: none;
+    }
+    .redirect-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#10003;</div>
+    <h1>You&#8217;re signed in!</h1>
+    <p>Your identity has been verified successfully.</p>
+    {% if redirect_url %}
+    <p>You will be redirected automatically in a moment.</p>
+    <p class="redirect-notice">
+      Not redirected?
+      <a href="{{ redirect_url }}" class="redirect-link">Click here</a>.
+    </p>
+    {% else %}
+    <p>You may now close this tab.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

@@ -44,3 +44,28 @@ class OtpVerifyResponse(BaseModel):
     verified: bool
     token: str
     otp_id: str
+
+
+# ---------------------------------------------------------------------------
+# Magic link send
+# ---------------------------------------------------------------------------
+
+class MagicLinkSendRequest(BaseModel):
+    """POST /api/v1/magic/send — request body."""
+
+    email: str
+    purpose: str = "login"
+    redirect_url: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Magic link verify
+# ---------------------------------------------------------------------------
+
+class MagicLinkVerifyResponse(BaseModel):
+    """Context passed to magic_verified.html on successful token verification."""
+
+    verified: bool
+    token: str
+    magic_link_id: str
+    redirect_url: str
