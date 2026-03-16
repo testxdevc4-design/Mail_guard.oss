@@ -39,7 +39,7 @@ import httpx
 from core.config import settings
 from core.crypto import decrypt
 from core.db import get_webhook, update_webhook
-from core.webhooks import sign_payload
+from core.webhooks import _serialize_payload, sign_payload
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ async def task_deliver_webhook(
         )
         return
 
+    # Serialize payload deterministically so the sent bytes match the signature.
+    # Both sign_payload() and this send use _serialize_payload() which applies
+    # sort_keys=True internally, guaranteeing the signed bytes == wire bytes.
+    body_bytes = _serialize_payload(payload)
     signature = sign_payload(raw_secret, payload)
     headers = {
         "Content-Type": "application/json",
@@ -118,7 +122,7 @@ async def task_deliver_webhook(
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload, headers=headers) as resp:
+                async with session.post(url, data=body_bytes, headers=headers) as resp:
                     if 200 <= resp.status < 300:
                         # Success — update last_triggered_at and return.
                         await asyncio.to_thread(

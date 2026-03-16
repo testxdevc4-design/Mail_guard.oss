@@ -460,7 +460,7 @@ class _SuccessSession:
     def __init__(self, **kwargs: Any) -> None:
         pass
 
-    def post(self, url: str, json: Any = None, headers: Any = None) -> _SuccessResp:  # type: ignore[override]
+    def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> _SuccessResp:  # type: ignore[override]
         return _SuccessResp()
 
     async def __aenter__(self) -> "_SuccessSession":
@@ -515,7 +515,7 @@ async def test_deliver_webhook_request_has_signature_header() -> None:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        def post(self, url: str, json: Any = None, headers: Any = None) -> _HeaderCapturingResp:  # type: ignore[override]
+        def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> _HeaderCapturingResp:  # type: ignore[override]
             captured_headers.append(headers or {})
             return _HeaderCapturingResp()
 
@@ -566,7 +566,7 @@ async def test_deliver_webhook_retry_backoff() -> None:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        def post(self, url: str, json: Any = None, headers: Any = None) -> _FailResp:  # type: ignore[override]
+        def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> _FailResp:  # type: ignore[override]
             return _FailResp()
 
         async def __aenter__(self) -> "_FailSession":
@@ -618,7 +618,7 @@ async def test_deliver_webhook_third_failure_marks_failed() -> None:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        def post(self, url: str, json: Any = None, headers: Any = None) -> _FailResp:  # type: ignore[override]
+        def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> _FailResp:  # type: ignore[override]
             return _FailResp()
 
         async def __aenter__(self) -> "_FailSession":
@@ -676,7 +676,7 @@ async def test_deliver_webhook_third_failure_fires_telegram_alert() -> None:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        def post(self, url: str, json: Any = None, headers: Any = None) -> _FailResp:  # type: ignore[override]
+        def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> _FailResp:  # type: ignore[override]
             return _FailResp()
 
         async def __aenter__(self) -> "_FailSession":
@@ -730,7 +730,7 @@ async def test_deliver_webhook_timeout_counts_as_failure() -> None:
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        def post(self, url: str, json: Any = None, headers: Any = None) -> Any:  # type: ignore[override]
+        def post(self, url: str, data: Any = None, headers: Any = None, json: Any = None) -> Any:  # type: ignore[override]
             class _TimeoutContext:
                 async def __aenter__(self) -> "_TimeoutContext":
                     nonlocal attempt_count

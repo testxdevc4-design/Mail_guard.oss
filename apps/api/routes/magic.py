@@ -139,7 +139,10 @@ async def send_magic_link(
         ) from exc
 
     # ── 4. Construct the verify URL ───────────────────────────────────────────
-    base_url = str(request.base_url).rstrip("/")
+    if settings.MAGIC_LINK_BASE_URL:
+        base_url = settings.MAGIC_LINK_BASE_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
     magic_link_url = f"{base_url}/api/v1/magic/verify/{raw_token}"
 
     # ── 5. Enqueue email delivery (non-fatal if it fails) ─────────────────────
@@ -177,7 +180,7 @@ async def send_magic_link(
 
     # ── 6. Fire webhook event (fire-and-forget) ──────────────────────────────
     if _fire_event is not None:
-        asyncio.create_task(
+        asyncio.ensure_future(
             _fire_event(
                 project.id,
                 "magic_link.sent",
@@ -227,7 +230,7 @@ async def verify_magic_link_route(token: str) -> HTMLResponse:
 
     # ── Fire webhook event (fire-and-forget) ─────────────────────────────────
     if _fire_event is not None:
-        asyncio.create_task(
+        asyncio.ensure_future(
             _fire_event(
                 _magic_project_id,
                 "magic_link.verified",

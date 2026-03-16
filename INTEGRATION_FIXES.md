@@ -139,6 +139,58 @@ Integration audit performed on MailGuard OSS — documenting every issue found a
 
 ---
 
+## Fix 12: Webhook payload bytes mismatch between signing and sending
+
+**File:** `apps/worker/tasks/deliver_webhook.py`
+
+**Problem:** `sign_payload(raw_secret, payload)` serializes the payload with `json.dumps(payload, sort_keys=True, separators=(",", ":"))` to compute the HMAC signature. However `session.post(url, json=payload, headers=headers)` used aiohttp's default JSON serialization (no `sort_keys`), producing a different byte sequence. This meant the `X-MailGuard-Signature` header never matched the actual HTTP body bytes, so every developer's webhook verification would fail.
+
+**Root cause:** Two separate JSON serializations were used — one deterministic (for the signature) and one non-deterministic (for the transport). With a dict whose keys are not already in sorted order, the bytes differ.
+
+**Fix:** Added `import json` and computed a single deterministic serialization upfront:
+```python
+body_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+```
+Then sent with `session.post(url, data=body_bytes, headers=headers)` so the bytes on the wire are identical to the bytes that were signed. Updated all session mock `post` methods in `tests/test_webhooks.py` to accept `data=` instead of `json=`.
+
+---
+
+## Fix 13: `asyncio.create_task()` fire-and-forget drops task reference
+
+**Files:** `apps/api/routes/otp.py`, `apps/api/routes/magic.py`
+
+**Problem:** Webhook events were fired with `asyncio.create_task(_fire_event(...))` but the returned task object was immediately discarded. In Python 3.12+, a task with no live reference can be garbage-collected before it completes, silently dropping the webhook event. Additionally, `create_task` is not available unless a running event loop already exists in the calling context.
+
+**Root cause:** Using `create_task` for fire-and-forget without storing the reference is an unsafe pattern. The event loop holds only a weak reference to tasks created this way.
+
+**Fix:** Replaced all four `asyncio.create_task(...)` calls with `asyncio.ensure_future(...)`, which schedules the coroutine in the running event loop and is the recommended pattern for fire-and-forget coroutines in FastAPI route handlers.
+
+---
+
+## Fix 14: Magic link URL ignores `MAGIC_LINK_BASE_URL` setting
+
+**Files:** `core/config.py`, `apps/api/routes/magic.py`
+
+**Problem:** The send-magic-link route always constructed the verify URL using `request.base_url`, which reflects the incoming request's host. When the API runs behind a reverse proxy or in a container, `request.base_url` resolves to an internal address (e.g. `http://0.0.0.0:3000/`) that is not reachable from the user's email client. The link in the email would be unclickable.
+
+**Root cause:** No configurable base URL was provided for magic link construction. `MAGIC_LINK_BASE_URL` was referenced in documentation but not defined in `Settings`.
+
+**Fix:** Added `MAGIC_LINK_BASE_URL: str = ''` to `core/config.py`. Updated `send_magic_link` in `apps/api/routes/magic.py` to prefer `settings.MAGIC_LINK_BASE_URL` when set, falling back to `request.base_url` for local development.
+
+---
+
+## Fix 15: Blocking sync DB calls inside async `check_and_rotate()`
+
+**File:** `core/sender_rotation.py`
+
+**Problem:** `check_and_rotate()` is an async function but called four synchronous Supabase DB functions directly: `get_project()`, `get_sender_email()`, `list_sender_emails()`, and `update_project()`. Each of these blocks the event loop while waiting for I/O, preventing the ARQ worker from concurrently processing other jobs during a rotation check.
+
+**Root cause:** The async wrapper was written without wrapping the blocking DB calls in `asyncio.to_thread()`.
+
+**Fix:** Replaced each direct sync call with `await asyncio.to_thread(fn, *args)` so that the Supabase I/O runs in a thread pool executor and the event loop remains free. Added `import asyncio` to the module imports.
+
+---
+
 ## Summary
 
 | # | File | Issue type | CI impact |
@@ -154,5 +206,10 @@ Integration audit performed on MailGuard OSS — documenting every issue found a
 | 9 | apps/bot/commands/keys.py | Missing `revokekey_command` | ❌ test fail |
 | 10 | apps/bot/commands/projects.py | Missing `activateproject_command` | ❌ test fail |
 | 11 | apps/bot/main.py | New handlers not registered | ✅ no direct CI fail |
+| 12 | apps/worker/tasks/deliver_webhook.py | Webhook HMAC body/signature mismatch | ❌ live verification fail |
+| 13 | apps/api/routes/otp.py, magic.py | create_task drops task reference | ⚠️ silent webhook drop |
+| 14 | core/config.py, apps/api/routes/magic.py | MAGIC_LINK_BASE_URL not configurable | ⚠️ email link unclickable |
+| 15 | core/sender_rotation.py | Blocking DB calls block event loop | ⚠️ worker throughput |
 
-**Final state:** `ruff check .` → All checks passed. `pytest tests/` → 394 passed, 0 failed.
+**Final state after Part 17:** `ruff check .` → All checks passed. `pytest tests/` → 394 passed, 0 failed.
+
