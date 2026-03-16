@@ -457,7 +457,7 @@ async def test_check_and_rotate_only_one_sender_no_rotation() -> None:
 # Part 15 additions — rotation_check.py cron task tests
 # ===========================================================================
 
-from unittest.mock import AsyncMock, patch  # noqa: F401,F811 (re-import is fine)
+from unittest.mock import AsyncMock, patch  # noqa: F401,F811,E402
 
 # Import the worker task under test
 from apps.worker.tasks.rotation_check import rotation_check  # noqa: E402

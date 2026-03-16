@@ -12,7 +12,7 @@ import httpretty
 import pytest
 
 from mailguard import AsyncMailGuard, MailGuard
-from mailguard.exceptions import ExpiredError, MailGuardError
+from mailguard.exceptions import ExpiredError
 
 API_KEY = "mg_live_test_key"
 BASE_URL = "https://api.mailguard.dev"

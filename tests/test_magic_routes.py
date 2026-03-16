@@ -695,8 +695,6 @@ async def test_send_magic_link_200_with_sender_email_id(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """200 success path when project has a sender_email_id (email enqueue path)."""
-    from core.models import EmailLog
-
     key_row = _make_api_key()
     project = _make_project(sender_email_id="sender-001")
     email_log = _make_email_log()
