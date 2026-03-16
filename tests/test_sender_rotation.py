@@ -451,3 +451,184 @@ async def test_check_and_rotate_only_one_sender_no_rotation() -> None:
     # Cannot rotate to itself — must return False and NOT call update_project.
     assert result is False
     mock_update.assert_not_called()
+
+
+# ===========================================================================
+# Part 15 additions — rotation_check.py cron task tests
+# ===========================================================================
+
+from unittest.mock import AsyncMock, patch  # noqa: F401,F811 (re-import is fine)
+
+# Import the worker task under test
+from apps.worker.tasks.rotation_check import rotation_check  # noqa: E402
+
+
+class TestRotationCheckTask:
+    @pytest.mark.asyncio
+    async def test_rotation_check_rotates_project_with_sender(self) -> None:
+        """rotation_check calls check_and_rotate for each project with a sender."""
+        project = _make_project(sender_email_id=_SENDER_ID_A)
+        rotated_ids: list = []
+
+        async def _mock_rotate(project_id: str) -> bool:
+            rotated_ids.append(project_id)
+            return True
+
+        with (
+            patch("apps.worker.tasks.rotation_check.list_projects", return_value=[project]),
+            patch("apps.worker.tasks.rotation_check.check_and_rotate", side_effect=_mock_rotate),
+        ):
+            await rotation_check({})
+
+        assert _PROJECT_ID in rotated_ids
+
+    @pytest.mark.asyncio
+    async def test_rotation_check_skips_project_without_sender(self) -> None:
+        """rotation_check skips projects where sender_email_id is None."""
+        project = _make_project(sender_email_id=None)
+        rotated_ids: list = []
+
+        async def _mock_rotate(project_id: str) -> bool:
+            rotated_ids.append(project_id)
+            return False
+
+        with (
+            patch("apps.worker.tasks.rotation_check.list_projects", return_value=[project]),
+            patch("apps.worker.tasks.rotation_check.check_and_rotate", side_effect=_mock_rotate),
+        ):
+            await rotation_check({})
+
+        assert rotated_ids == []  # No rotation for project without sender
+
+    @pytest.mark.asyncio
+    async def test_rotation_check_handles_list_projects_exception(self) -> None:
+        """rotation_check returns gracefully when list_projects raises."""
+        with patch(
+            "apps.worker.tasks.rotation_check.list_projects",
+            side_effect=RuntimeError("db down"),
+        ):
+            # Must not raise — exception is caught and logged
+            await rotation_check({})
+
+    @pytest.mark.asyncio
+    async def test_rotation_check_handles_check_and_rotate_exception(self) -> None:
+        """rotation_check continues to next project when check_and_rotate raises."""
+        project_a = _make_project(sender_email_id=_SENDER_ID_A)
+        project_b = _make_project(sender_email_id=_SENDER_ID_B)
+        project_b.id = "proj-0002"
+        project_b.slug = "proj-b"
+
+        successful_ids: list = []
+
+        async def _mock_rotate(project_id: str) -> bool:
+            if project_id == _PROJECT_ID:
+                raise RuntimeError("rotation error")
+            successful_ids.append(project_id)
+            return True
+
+        with (
+            patch(
+                "apps.worker.tasks.rotation_check.list_projects",
+                return_value=[project_a, project_b],
+            ),
+            patch(
+                "apps.worker.tasks.rotation_check.check_and_rotate",
+                side_effect=_mock_rotate,
+            ),
+        ):
+            # Must not raise even when one project fails
+            await rotation_check({})
+
+        # Second project was still processed despite first failing
+        assert "proj-0002" in successful_ids
+
+    @pytest.mark.asyncio
+    async def test_rotation_check_no_rotation_returns_false(self) -> None:
+        """rotation_check does not log rotation when check_and_rotate returns False."""
+        project = _make_project(sender_email_id=_SENDER_ID_A)
+
+        async def _mock_rotate(project_id: str) -> bool:
+            return False
+
+        with (
+            patch("apps.worker.tasks.rotation_check.list_projects", return_value=[project]),
+            patch("apps.worker.tasks.rotation_check.check_and_rotate", side_effect=_mock_rotate),
+        ):
+            # Should complete without exception; no rotation happened
+            await rotation_check({})
+
+
+# ===========================================================================
+# Part 15 additions — purge_otps cron task tests
+# ===========================================================================
+
+from apps.worker.tasks.purge_otps import purge_expired_otps  # noqa: E402
+
+
+class TestPurgeExpiredOtps:
+    @pytest.mark.asyncio
+    async def test_purge_deletes_expired_records(self) -> None:
+        """purge_expired_otps calls the correct Supabase delete chain."""
+        mock_client = MagicMock()
+        # Chain: .table().delete().lt().eq().execute()
+        mock_execute = MagicMock()
+        mock_execute.data = [{"id": "otp-1"}, {"id": "otp-2"}]
+        (
+            mock_client
+            .table.return_value
+            .delete.return_value
+            .lt.return_value
+            .eq.return_value
+            .execute.return_value
+        ) = mock_execute
+
+        with patch("apps.worker.tasks.purge_otps.get_client", return_value=mock_client):
+            await purge_expired_otps({})
+
+        mock_client.table.assert_called_with("otp_records")
+
+    @pytest.mark.asyncio
+    async def test_purge_handles_empty_result(self) -> None:
+        """purge_expired_otps handles empty result.data gracefully."""
+        mock_client = MagicMock()
+        mock_execute = MagicMock()
+        mock_execute.data = []
+        (
+            mock_client
+            .table.return_value
+            .delete.return_value
+            .lt.return_value
+            .eq.return_value
+            .execute.return_value
+        ) = mock_execute
+
+        with patch("apps.worker.tasks.purge_otps.get_client", return_value=mock_client):
+            await purge_expired_otps({})  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_purge_handles_none_data(self) -> None:
+        """purge_expired_otps handles None result.data gracefully."""
+        mock_client = MagicMock()
+        mock_execute = MagicMock()
+        mock_execute.data = None
+        (
+            mock_client
+            .table.return_value
+            .delete.return_value
+            .lt.return_value
+            .eq.return_value
+            .execute.return_value
+        ) = mock_execute
+
+        with patch("apps.worker.tasks.purge_otps.get_client", return_value=mock_client):
+            await purge_expired_otps({})  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_purge_handles_exception(self) -> None:
+        """purge_expired_otps returns gracefully when an exception is raised."""
+        with patch(
+            "apps.worker.tasks.purge_otps.get_client",
+            side_effect=RuntimeError("db down"),
+        ):
+            # Must not raise — exception is caught and logged
+            await purge_expired_otps({})

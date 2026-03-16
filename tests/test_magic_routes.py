@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -421,3 +422,316 @@ async def test_send_magic_link_422_invalid_email(
     )
     assert r.status_code == 422
     assert r.json()["detail"]["error"] == "validation_error"
+
+
+# ===========================================================================
+# Part 15 additions — coverage for core/magic_links.py and route error paths
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# core/magic_links.py — create_magic_link and verify_magic_link
+# ---------------------------------------------------------------------------
+
+def test_create_magic_link_returns_raw_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_magic_link returns a URL-safe token and calls insert_magic_link."""
+    from core.magic_links import create_magic_link
+
+    inserted: list = []
+
+    def _mock_insert(data: dict) -> None:
+        inserted.append(data)
+
+    monkeypatch.setattr("core.magic_links.insert_magic_link", _mock_insert)
+
+    token = create_magic_link(
+        project_id="proj-1",
+        email="user@example.com",
+        purpose="login",
+    )
+
+    assert isinstance(token, str)
+    assert len(token) > 0
+    assert len(inserted) == 1
+    row = inserted[0]
+    assert row["project_id"] == "proj-1"
+    assert row["purpose"] == "login"
+    assert row["is_used"] is False
+    # Raw token must NOT be stored
+    assert token not in str(row)
+
+
+def test_create_magic_link_with_redirect_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """redirect_url is forwarded to insert_magic_link payload."""
+    from core.magic_links import create_magic_link
+
+    inserted: list = []
+    monkeypatch.setattr("core.magic_links.insert_magic_link", lambda d: inserted.append(d))
+
+    create_magic_link(
+        project_id="proj-2",
+        email="test@example.com",
+        redirect_url="https://app.example.com/dashboard",
+    )
+
+    assert inserted[0]["redirect_url"] == "https://app.example.com/dashboard"
+
+
+def test_create_magic_link_token_hash_sha256(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the SHA-256 hex digest of the token is stored, not the raw token."""
+    import hashlib
+    from core.magic_links import create_magic_link
+
+    inserted: list = []
+    monkeypatch.setattr("core.magic_links.insert_magic_link", lambda d: inserted.append(d))
+
+    raw_token = None
+
+    real_token_urlsafe = __import__("secrets").token_urlsafe
+
+    def _capture_token(n: int) -> str:
+        nonlocal raw_token
+        raw_token = real_token_urlsafe(n)
+        return raw_token
+
+    monkeypatch.setattr("core.magic_links.secrets.token_urlsafe", _capture_token)
+
+    create_magic_link("proj-3", "x@y.com")
+
+    expected_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    assert inserted[0]["token_hash"] == expected_hash
+
+
+def test_verify_magic_link_invalid_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_magic_link returns invalid_token when hash not found in DB."""
+    from core.magic_links import verify_magic_link
+
+    monkeypatch.setattr("core.magic_links.get_magic_link_by_token_hash", lambda _: None)
+
+    result = verify_magic_link("nonexistenttoken")
+    assert result["verified"] is False
+    assert result["error"] == "invalid_token"
+
+
+def test_verify_magic_link_already_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_magic_link returns already_used when is_used is True."""
+    from datetime import datetime, timedelta, timezone
+    from core.magic_links import verify_magic_link
+    from core.models import MagicLink
+
+    UTC = timezone.utc
+    NOW = datetime.now(UTC)
+    used_row = MagicLink(
+        id="ml-001",
+        project_id="proj-1",
+        email_hash="ehash",
+        token_hash="thash",
+        purpose="login",
+        redirect_url=None,
+        is_used=True,
+        expires_at=NOW + timedelta(minutes=10),
+        created_at=NOW,
+    )
+    monkeypatch.setattr("core.magic_links.get_magic_link_by_token_hash", lambda _: used_row)
+
+    result = verify_magic_link("sometoken")
+    assert result["verified"] is False
+    assert result["error"] == "already_used"
+
+
+def test_verify_magic_link_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_magic_link returns expired when token is past its expiry."""
+    from datetime import datetime, timedelta, timezone
+    from core.magic_links import verify_magic_link
+    from core.models import MagicLink
+
+    UTC = timezone.utc
+    NOW = datetime.now(UTC)
+    expired_row = MagicLink(
+        id="ml-002",
+        project_id="proj-1",
+        email_hash="ehash",
+        token_hash="thash",
+        purpose="login",
+        redirect_url=None,
+        is_used=False,
+        expires_at=NOW - timedelta(minutes=5),
+        created_at=NOW - timedelta(minutes=20),
+    )
+    monkeypatch.setattr(
+        "core.magic_links.get_magic_link_by_token_hash", lambda _: expired_row
+    )
+
+    result = verify_magic_link("expiredtoken")
+    assert result["verified"] is False
+    assert result["error"] == "expired"
+
+
+def test_verify_magic_link_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_magic_link returns verified=True with JWT on a valid link."""
+    from datetime import datetime, timedelta, timezone
+    from core.magic_links import verify_magic_link
+    from core.models import MagicLink
+
+    UTC = timezone.utc
+    NOW = datetime.now(UTC)
+    valid_row = MagicLink(
+        id="ml-003",
+        project_id="proj-1",
+        email_hash="ehash",
+        token_hash="thash",
+        purpose="login",
+        redirect_url="https://example.com",
+        is_used=False,
+        expires_at=NOW + timedelta(minutes=10),
+        created_at=NOW,
+    )
+    monkeypatch.setattr(
+        "core.magic_links.get_magic_link_by_token_hash", lambda _: valid_row
+    )
+    monkeypatch.setattr("core.magic_links.update_magic_link", lambda *a, **kw: None)
+
+    result = verify_magic_link("validtoken")
+    assert result["verified"] is True
+    assert "token" in result
+    assert result["link_id"] == "ml-003"
+    assert result["redirect_url"] == "https://example.com"
+
+
+def test_verify_magic_link_naive_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_magic_link handles naive (tz-unaware) expires_at datetimes."""
+    from datetime import datetime, timedelta, timezone
+    from core.magic_links import verify_magic_link
+    from core.models import MagicLink
+
+    UTC = timezone.utc
+    NOW = datetime.now(UTC)
+    # expires_at without tzinfo — should be treated as UTC and still be valid
+    naive_expiry = datetime.utcnow() + timedelta(minutes=10)
+    valid_row = MagicLink(
+        id="ml-004",
+        project_id="proj-1",
+        email_hash="ehash",
+        token_hash="thash",
+        purpose="login",
+        redirect_url=None,
+        is_used=False,
+        expires_at=naive_expiry,
+        created_at=NOW,
+    )
+    monkeypatch.setattr(
+        "core.magic_links.get_magic_link_by_token_hash", lambda _: valid_row
+    )
+    monkeypatch.setattr("core.magic_links.update_magic_link", lambda *a, **kw: None)
+
+    result = verify_magic_link("naivetoken")
+    assert result["verified"] is True
+
+
+# ---------------------------------------------------------------------------
+# Route error paths — 503 when project fetch fails or create_magic_link fails
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_send_magic_link_503_project_fetch_fails(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """503 when get_project raises an exception."""
+    key_row = _make_api_key()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr(
+        "apps.api.routes.magic.get_project", lambda _: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+
+    r = await client.post(
+        "/api/v1/magic/send",
+        json=_valid_send_body(),
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"]["error"] == "service_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_send_magic_link_503_project_is_none(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """503 when get_project returns None (project not found)."""
+    key_row = _make_api_key()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.magic.get_project", lambda _: None)
+
+    r = await client.post(
+        "/api/v1/magic/send",
+        json=_valid_send_body(),
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_magic_link_503_create_link_fails(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """503 when create_magic_link raises an exception."""
+    key_row = _make_api_key()
+    project = _make_project()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.magic.get_project", lambda _: project)
+    monkeypatch.setattr(
+        "apps.api.routes.magic.create_magic_link",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("db error")),
+    )
+
+    r = await client.post(
+        "/api/v1/magic/send",
+        json=_valid_send_body(),
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_magic_link_200_with_sender_email_id(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """200 success path when project has a sender_email_id (email enqueue path)."""
+    from core.models import EmailLog
+
+    key_row = _make_api_key()
+    project = _make_project(sender_email_id="sender-001")
+    email_log = _make_email_log()
+    monkeypatch.setattr("core.api_keys.get_api_key_by_hash", lambda _: key_row)
+    monkeypatch.setattr("apps.api.routes.magic.get_project", lambda _: project)
+    monkeypatch.setattr(
+        "apps.api.routes.magic.create_magic_link",
+        lambda *a, **kw: "raw_token_abc",
+    )
+    monkeypatch.setattr(
+        "apps.api.routes.magic.insert_email_log", lambda _: email_log
+    )
+    monkeypatch.setattr(
+        "apps.api.routes.magic._enqueue_email",
+        AsyncMock(return_value=None),
+    )
+
+    r = await client.post(
+        "/api/v1/magic/send",
+        json=_valid_send_body(),
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "sent"
+
+
+@pytest.mark.asyncio
+async def test_verify_magic_link_410_on_exception(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """410 is returned when verify_magic_link raises an unexpected exception."""
+    monkeypatch.setattr(
+        "apps.api.routes.magic.verify_magic_link",
+        lambda _: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    r = await client.get(f"/api/v1/magic/verify/{_SAMPLE_TOKEN}")
+    assert r.status_code == 410

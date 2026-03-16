@@ -322,3 +322,123 @@ async def test_password_never_in_exception_message() -> None:
             )
         else:
             pytest.fail("Expected ConnectionError was not raised")
+
+
+# ===========================================================================
+# Part 15 additions — core/templates.py coverage
+# ===========================================================================
+
+from core.templates import (  # noqa: E402
+    render_magic_link_email,
+    render_magic_verified_page,
+    render_magic_expired_page,
+    render_otp_email,
+)
+
+
+class TestRenderOtpEmail:
+    def test_render_otp_email_returns_tuple(self) -> None:
+        """render_otp_email returns (subject, text_body, html_body) tuple."""
+        subject, text_body, html_body = render_otp_email(
+            otp_code="123456",
+            expiry_minutes=10,
+            project_name="MyApp",
+        )
+        assert isinstance(subject, str)
+        assert isinstance(text_body, str)
+        assert isinstance(html_body, str)
+
+    def test_render_otp_email_contains_code(self) -> None:
+        """OTP code is present in the rendered email bodies."""
+        _, text, html = render_otp_email(
+            otp_code="999888",
+            expiry_minutes=5,
+            project_name="TestApp",
+        )
+        assert "999888" in text or "999888" in html
+
+    def test_render_otp_email_subject_contains_project(self) -> None:
+        """Subject line contains the project name."""
+        subject, _, _ = render_otp_email(
+            otp_code="111222",
+            expiry_minutes=10,
+            project_name="AcmeCorp",
+        )
+        assert "AcmeCorp" in subject
+
+    def test_render_otp_email_with_purpose(self) -> None:
+        """Purpose string is accepted and rendered without error."""
+        subject, text, html = render_otp_email(
+            otp_code="444555",
+            expiry_minutes=15,
+            project_name="TestApp",
+            purpose="password_reset",
+        )
+        assert subject  # Non-empty
+
+
+class TestRenderMagicLinkEmail:
+    def test_render_magic_link_email_returns_tuple(self) -> None:
+        """render_magic_link_email returns (subject, text_body, html_body)."""
+        subject, text, html = render_magic_link_email(
+            magic_link_url="https://api.example.com/magic/verify/abc123",
+            expiry_minutes=15,
+            project_name="MyProject",
+        )
+        assert isinstance(subject, str)
+        assert isinstance(text, str)
+        assert isinstance(html, str)
+
+    def test_render_magic_link_email_contains_url(self) -> None:
+        """magic_link_url is present in rendered email bodies."""
+        url = "https://api.example.com/magic/verify/tok_abc"
+        _, text, html = render_magic_link_email(
+            magic_link_url=url,
+            expiry_minutes=15,
+            project_name="TestApp",
+        )
+        assert url in text or url in html
+
+    def test_render_magic_link_email_subject_contains_project(self) -> None:
+        """Subject contains the project name."""
+        subject, _, _ = render_magic_link_email(
+            magic_link_url="https://example.com/magic/verify/token",
+            expiry_minutes=10,
+            project_name="WidgetCo",
+        )
+        assert "WidgetCo" in subject
+
+
+class TestRenderMagicVerifiedPage:
+    def test_render_magic_verified_page_returns_html_string(self) -> None:
+        """render_magic_verified_page returns non-empty HTML."""
+        html = render_magic_verified_page(jwt_token="my.jwt.token")
+        assert isinstance(html, str)
+        assert len(html) > 0
+
+    def test_render_magic_verified_page_contains_jwt(self) -> None:
+        """JWT token is embedded in the verified page."""
+        token = "header.payload.signature"
+        html = render_magic_verified_page(jwt_token=token)
+        assert token in html
+
+    def test_render_magic_verified_page_with_redirect_url(self) -> None:
+        """redirect_url is present in the verified page when supplied."""
+        html = render_magic_verified_page(
+            jwt_token="my.jwt.token",
+            redirect_url="https://app.example.com/dashboard",
+        )
+        assert "https://app.example.com/dashboard" in html
+
+    def test_render_magic_verified_page_no_redirect_url(self) -> None:
+        """Page renders without a redirect_url (None default)."""
+        html = render_magic_verified_page(jwt_token="my.jwt.token", redirect_url=None)
+        assert isinstance(html, str)
+
+
+class TestRenderMagicExpiredPage:
+    def test_render_magic_expired_page_returns_html_string(self) -> None:
+        """render_magic_expired_page returns non-empty HTML."""
+        html = render_magic_expired_page()
+        assert isinstance(html, str)
+        assert len(html) > 0
