@@ -189,7 +189,8 @@ async def test_send_otp_200_ok(
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["sent"] is True
+    assert body["status"] == "sent"
+    assert "expires_in" in body
     assert body["masked_email"] == "u***@example.com"
 
 
@@ -694,7 +695,7 @@ async def test_send_otp_200_with_sender_email_id(
         headers={"Authorization": f"Bearer {_LIVE_KEY}"},
     )
     assert r.status_code == 200
-    assert r.json()["sent"] is True
+    assert r.json()["status"] == "sent"
 
 
 @pytest.mark.asyncio

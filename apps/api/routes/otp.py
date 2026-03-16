@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import redis as sync_redis_lib
@@ -245,7 +245,11 @@ async def send_otp(
                 )
             )
 
-        return JSONResponse(content={"sent": True, "masked_email": masked})
+        return JSONResponse(content={
+            "status": "sent",
+            "expires_in": project.otp_expiry_seconds,
+            "masked_email": masked,
+        })
 
     finally:
         # Anti-enumeration: pad every response (including errors) to >= 200 ms
@@ -288,10 +292,14 @@ async def verify_otp(
                     {"otp_id": result.get("otp_id", "")},
                 )
             )
+        expires_at = (
+            datetime.now(UTC) + timedelta(minutes=settings.JWT_EXPIRY_MINUTES)
+        ).isoformat()
         return JSONResponse(
             content={
                 "verified": True,
                 "token": result["token"],
+                "expires_at": expires_at,
                 "otp_id": result["otp_id"],
             }
         )
