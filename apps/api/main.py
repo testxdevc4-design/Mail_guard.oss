@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
 from apps.api.routes import health, otp
 from apps.api.routes import magic
+from apps.api.routes import webhooks
 from apps.api.middleware.rate_limit import RateLimitMiddleware
 from apps.api.middleware.security import SecurityHeadersMiddleware
 
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, tags=["System"])
     app.include_router(otp.router)
     app.include_router(magic.router)
+    app.include_router(webhooks.router)
 
     return app
 

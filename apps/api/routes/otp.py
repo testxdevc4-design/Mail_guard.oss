@@ -53,6 +53,15 @@ _MIN_RESPONSE_SECS: float = 0.200  # 200 ms anti-enumeration floor
 _RETRY_AFTER: int = 3_600          # 1-hour window (key_hourly tier)
 
 # ---------------------------------------------------------------------------
+# Webhook import — silently skipped if Part 09 is not yet implemented
+# ---------------------------------------------------------------------------
+
+try:
+    from core.webhooks import fire_event as _fire_event  # type: ignore[import]
+except ImportError:
+    _fire_event = None  # type: ignore[assignment]
+
+# ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
 
@@ -225,6 +234,17 @@ async def send_otp(
                 pass  # Email failure is non-fatal; OTP is already persisted
 
         masked = _mask_email(body.email)
+
+        # ── 6. Fire webhook event (fire-and-forget) ───────────────────────────
+        if _fire_event is not None:
+            asyncio.create_task(
+                _fire_event(
+                    project.id,
+                    "otp.sent",
+                    {"purpose": body.purpose},
+                )
+            )
+
         return JSONResponse(content={"sent": True, "masked_email": masked})
 
     finally:
@@ -259,6 +279,15 @@ async def verify_otp(
         ) from exc
 
     if result.get("verified"):
+        # Fire webhook event (fire-and-forget)
+        if _fire_event is not None:
+            asyncio.create_task(
+                _fire_event(
+                    key_row.project_id,
+                    "otp.verified",
+                    {"otp_id": result.get("otp_id", "")},
+                )
+            )
         return JSONResponse(
             content={
                 "verified": True,

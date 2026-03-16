@@ -20,6 +20,7 @@ skipped via try/except ImportError; the routes never crash on a missing module.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 
 from arq import create_pool
@@ -31,7 +32,7 @@ from apps.api.middleware.auth import require_api_key
 from apps.api.schemas import MagicLinkSendRequest
 from core.config import settings
 from core.crypto import hmac_email
-from core.db import get_project, insert_email_log
+from core.db import get_magic_link_by_token_hash, get_project, insert_email_log
 from core.magic_links import create_magic_link, verify_magic_link
 from core.models import ApiKey
 from core.redis_client import arq_redis_settings
@@ -174,18 +175,15 @@ async def send_magic_link(
         except Exception:
             pass  # Email failure is non-fatal; magic link is already persisted
 
-    # ── 6. Fire webhook event (Part 09) ──────────────────────────────────────
-    # TODO: fire magic_link.sent via fire_event when Part 09 is implemented
+    # ── 6. Fire webhook event (fire-and-forget) ──────────────────────────────
     if _fire_event is not None:
-        try:
-            await asyncio.to_thread(
-                _fire_event,
+        asyncio.create_task(
+            _fire_event(
                 project.id,
                 "magic_link.sent",
                 {"purpose": body.purpose},
             )
-        except Exception:
-            pass  # Webhook failure must never block the send response
+        )
 
     return JSONResponse(content={"status": "sent"})
 
@@ -198,6 +196,18 @@ async def verify_magic_link_route(token: str) -> HTMLResponse:
       meta-refresh redirect after 2 seconds if ``redirect_url`` is set)
     - ``410 magic_expired.html`` for expired, already-used, or invalid tokens
     """
+    # Resolve project_id for the webhook event before verify consumes the token.
+    # ``verify_magic_link`` marks the link as used so we look up the row first.
+    _magic_project_id = ""
+    if _fire_event is not None:
+        try:
+            _token_hash = hashlib.sha256(token.encode()).hexdigest()
+            _ml_row = await asyncio.to_thread(get_magic_link_by_token_hash, _token_hash)
+            if _ml_row is not None:
+                _magic_project_id = _ml_row.project_id
+        except Exception:
+            pass  # best-effort; webhook event will be skipped if lookup fails
+
     try:
         result = await asyncio.to_thread(verify_magic_link, token)
     except Exception:
@@ -215,18 +225,15 @@ async def verify_magic_link_route(token: str) -> HTMLResponse:
     jwt_token: str = result["token"]
     redirect_url: str | None = result.get("redirect_url")
 
-    # ── Fire webhook event (Part 09) ─────────────────────────────────────────
-    # TODO: fire magic_link.verified via fire_event when Part 09 is implemented
+    # ── Fire webhook event (fire-and-forget) ─────────────────────────────────
     if _fire_event is not None:
-        try:
-            await asyncio.to_thread(
-                _fire_event,
-                result.get("link_id", ""),
+        asyncio.create_task(
+            _fire_event(
+                _magic_project_id,
                 "magic_link.verified",
-                {},
+                {"link_id": result.get("link_id", "")},
             )
-        except Exception:
-            pass  # Webhook failure must never block the verify response
+        )
 
     return HTMLResponse(
         content=render_magic_verified_page(
