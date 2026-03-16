@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Link expired or already used</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background-color: #f4f4f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 8px;
+      max-width: 480px;
+      width: 100%;
+      padding: 48px 40px;
+      text-align: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    .icon {
+      font-size: 48px;
+      margin-bottom: 24px;
+      color: #ef4444;
+    }
+    h1 {
+      font-size: 24px;
+      color: #111827;
+      margin-bottom: 12px;
+    }
+    p {
+      font-size: 15px;
+      color: #6b7280;
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .reason {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#10007;</div>
+    <h1>Link expired or already used</h1>
+    <p>
+      This sign-in link is no longer valid. Magic links expire after
+      15&nbsp;minutes and can only be used once.
+    </p>
+    <p>Please request a new sign-in link and try again.</p>
+    {% if reason %}
+    <p class="reason">Reason: {{ reason }}</p>
+    {% endif %}
+  </div>
+</body>
+</html>

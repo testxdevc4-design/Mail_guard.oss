@@ -344,6 +344,7 @@ def _row_to_magic_link(row: Dict[str, Any]) -> MagicLink:
         is_used=bool(row["is_used"]),
         expires_at=_parse_dt(row["expires_at"]),
         created_at=_parse_dt(row["created_at"]),
+        used_at=_parse_dt_opt(row.get("used_at")),
     )
 
 

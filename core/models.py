@@ -83,6 +83,7 @@ class MagicLink:
     is_used: bool
     expires_at: datetime
     created_at: datetime
+    used_at: Optional[datetime] = None
 
 
 @dataclass
