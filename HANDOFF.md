@@ -1,78 +1,46 @@
-# HANDOFF — Part 02 of 15
+# HANDOFF — Part 03 of 15
 
 ## Files created / modified
 
-| File | Description |
-|------|-------------|
-| `apps/api/main.py` | FastAPI app factory — CORS middleware, SecurityHeadersMiddleware, router registration, /docs only in development (~30 lines) |
-| `apps/api/routes/health.py` | GET /health — checks Supabase + Redis connectivity, returns `{status, db, redis}` with 200 always (~40 lines) |
-| `apps/api/middleware/security.py` | `SecurityHeadersMiddleware` — Secure() headers (X-Frame-Options, X-Content-Type-Options, HSTS, etc.), X-Request-ID passthrough/generation, X-Response-Time (~22 lines) |
-| `apps/api/Dockerfile` | python:3.12-slim, non-root appuser, uvicorn CMD, EXPOSE 3000 (~10 lines) |
-| `apps/worker/Dockerfile` | python:3.12-slim, non-root appuser, arq CMD, EXPOSE 3000 (~10 lines) |
-| `apps/bot/Dockerfile` | python:3.12-slim, non-root appuser, python -m apps.bot.main CMD, EXPOSE 3000 (~10 lines) |
-| `.github/workflows/ci.yml` | ruff + mypy + pytest on every push/PR; Railway deploy on main push; permissions: contents: read (~58 lines) |
-| `core/config.py` | Added `# type: ignore[call-arg]` to `settings = Settings()` for mypy/pydantic-settings compatibility |
+| File | Lines | Description |
+|------|-------|-------------|
+| `requirements.txt` | 51 | Fixed httpx version: `0.27.0` → `0.26.0` (resolves `python-telegram-bot 20.8` conflict) |
+| `core/models.py` | 111 | Dataclasses for all 7 tables: SenderEmail, Project, ApiKey, OtpRecord, MagicLink, Webhook, EmailLog |
+| `core/crypto.py` | 84 | AES-256-GCM `encrypt()`/`decrypt()` + HMAC-SHA256 `hmac_email()` with email normalisation |
+| `core/redis_client.py` | 50 | Async Redis connection pool via `redis.asyncio`; `get_redis()`, `close_redis()`, `arq_redis_settings()` |
+| `core/db.py` | 497 | Supabase SERVICE ROLE KEY client + typed CRUD helpers for all 7 tables |
+| `tests/test_crypto.py` | 153 | 15 tests: 500-string round-trip, unique IVs, unicode, tamper detection, wrong-key, HMAC normalisation |
+| `tests/test_db.py` | 460 | 30 tests: insert/select/update for all 7 tables using mocked Supabase client |
 
 ## What works right now
 
 ```bash
-# Verify app creates and /health route exists
-python -c "
-import os
-os.environ.update({
-  'SUPABASE_URL': 'https://test.supabase.co',
-  'SUPABASE_SERVICE_ROLE_KEY': 'key',
-  'REDIS_URL': 'redis://localhost:6379',
-  'ENCRYPTION_KEY': 'a' * 64,
-  'JWT_SECRET': 'b' * 64,
-  'TELEGRAM_BOT_TOKEN': 'tok',
-  'TELEGRAM_ADMIN_UID': '1',
-})
-from apps.api.main import create_app
-app = create_app()
-print(app.title, [r.path for r in app.routes])
-"
-# → MailGuard OSS ['/openapi.json', '/health']
+# All 52 tests pass
+pytest tests/ -v
+# → 52 passed, 3 warnings
 
-# Verify security headers work
-python -c "
-import os, asyncio
-os.environ.update({
-  'SUPABASE_URL': 'https://test.supabase.co',
-  'SUPABASE_SERVICE_ROLE_KEY': 'key',
-  'REDIS_URL': 'redis://localhost:6379',
-  'ENCRYPTION_KEY': 'a' * 64,
-  'JWT_SECRET': 'b' * 64,
-  'TELEGRAM_BOT_TOKEN': 'tok',
-  'TELEGRAM_ADMIN_UID': '1',
-})
-from httpx import AsyncClient, ASGITransport
-from apps.api.main import app
-async def t():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as c:
-        r = await c.get('/health')
-        assert r.status_code == 200
-        assert r.headers.get('x-frame-options') == 'SAMEORIGIN'
-        assert r.headers.get('x-content-type-options') == 'nosniff'
-        assert r.headers.get('x-request-id')
-        print('ALL OK', r.json())
-asyncio.run(t())
-"
-# → ALL OK {'status': 'degraded', 'db': False, 'redis': False}
+# Lint clean
+ruff check .
+# → Found 0 errors
 
-# Lint: all checks passed
-ruff check apps/ core/
-
-# Types: no issues
+# Types clean
 mypy apps/ core/ --ignore-missing-imports --no-strict-optional
+# → Success: no issues found in 15 source files
+
+# encrypt/decrypt round-trip confirmed
+python -c "
+import os; os.environ.update({'SUPABASE_URL':'https://t.supabase.co','SUPABASE_SERVICE_ROLE_KEY':'k','REDIS_URL':'redis://localhost:6379','ENCRYPTION_KEY':'a'*64,'JWT_SECRET':'b'*64,'TELEGRAM_BOT_TOKEN':'t:t','TELEGRAM_ADMIN_UID':'1'})
+from core.crypto import encrypt, decrypt, hmac_email
+assert decrypt(encrypt('hello')) == 'hello'
+assert hmac_email('User@Example.com') == hmac_email('user@example.com')
+print('ALL OK')
+"
 ```
 
 ## What is NOT built yet
 
 - `apps/worker/main.py` — ARQ WorkerSettings (Part 06)
 - `apps/bot/main.py` — Telegram bot entry point (Part 11)
-- `core/crypto.py` — AES-256-GCM encrypt/decrypt + HMAC email (Part 03)
-- `core/db.py` — Supabase table helpers (Part 03)
 - `core/otp.py` — OTP generation/verification lifecycle (Part 04)
 - `core/magic.py` — Magic link generation/verification (Part 08)
 - `core/jwt_utils.py` — JWT issue/verify (Part 04)
@@ -80,33 +48,43 @@ mypy apps/ core/ --ignore-missing-imports --no-strict-optional
 - `core/templates.py` — Jinja2 OTP/magic link templates (Part 06)
 - `core/sender_rotation.py` — Auto sender rotation (Part 10)
 - `core/webhooks.py` — HMAC-signed webhook delivery (Part 09)
-- `core/redis_client.py` — Redis/ARQ connection pool (Part 06)
 - `core/api_keys.py` — Key generation and validation (Part 05)
 - All API route files (OTP, magic, webhooks, etc.) — Parts 05–09
 - All SDK code — Part 14
 - All bot commands — Parts 11–13
-- All tests — Parts 03–15
 - `SECURITY.md` — Part 15
 
 ## Env vars introduced
 
-No new env vars in Part 02 — all vars remain from Part 01.
+No new env vars in Part 03 — all vars remain from Part 01.
 
 ## DB state
 
 - 7 migration files still pending manual run in Supabase SQL Editor (001 → 007)
-- No schema changes in Part 02
+- No schema changes in Part 03
 
 ## Decisions made
 
-- Used `SecurityHeadersMiddleware` class (in `security.py`) added via `app.add_middleware()` instead of inline decorator — cleaner separation of concerns
-- `secure.Secure().framework.fastapi(response)` sets: Strict-Transport-Security, X-Frame-Options (SAMEORIGIN), X-XSS-Protection (0), X-Content-Type-Options (nosniff), Referrer-Policy, Cache-Control
-- `/health` always returns HTTP 200; `status` field is `"ok"` (both up) or `"degraded"` (one/both down) — never 503, so load balancers don't route away
-- `SecurityHeadersMiddleware` preserves incoming `X-Request-ID` from clients/proxies for distributed tracing
-- CI uses `--ignore-missing-imports --no-strict-optional` for mypy — sufficient for current scope
-- Added `permissions: contents: read` to both CI jobs (CodeQL/security requirement)
-- `core/config.py` `Settings()` call has `# type: ignore[call-arg]` — pydantic-settings reads from env vars, not constructor args; mypy doesn't understand this without the pydantic mypy plugin
-- Dockerfiles follow the exact template from the guide (all 3 use same base pattern, EXPOSE 3000)
+- `httpx` pinned to `0.26.0` (not `0.27.0`) — `python-telegram-bot 20.8` requires `httpx~=0.26.0`
+- AES-256-GCM token format: `base64url(iv):base64url(ciphertext+tag)` — `:` as separator
+- IV is 12 bytes (96-bit) — GCM recommended nonce size; fresh random IV per call
+- `hmac_email()` uses `hmac.new(key, email.encode(), sha256)` after `.strip().lower()` normalisation
+- `core/db.py` uses a module-level singleton client (service-role key); never the anon key
+- `tests/test_db.py` mocks the Supabase client so CI passes without a live Supabase instance
+- Both new test files set `os.environ.setdefault("ENV", "development")` to ensure the pre-existing `test_docs_url_in_development` test keeps passing when tests run in alphabetical order
+- Note: build guide mentions "8 tables" but migrations define 7; all 7 are covered
+
+## Test results
+
+```
+pytest tests/test_crypto.py  → 15 passed
+pytest tests/test_db.py      → 30 passed
+pytest tests/                → 52 passed, 0 failed
+```
+
+## Known issues
+
+None.
 
 ## Next agent: do these first
 
@@ -114,5 +92,5 @@ No new env vars in Part 02 — all vars remain from Part 01.
 2. Run all 7 SQL migrations in Supabase SQL Editor (001 → 007)
 3. Deploy to Railway and confirm `/health` returns `{status:ok,db:true,redis:true}`
 4. Add `RAILWAY_TOKEN` as a GitHub Actions secret for the deploy job
-5. Optionally add `ENCRYPTION_KEY` and `JWT_SECRET` as GitHub Actions secrets (fallback defaults are in CI for tests)
-6. Begin Part 03: create `core/crypto.py`, `core/db.py`, `core/redis_client.py`, and their tests
+5. Begin Part 04: create `core/otp.py`, `core/jwt_utils.py`, and their tests
+
