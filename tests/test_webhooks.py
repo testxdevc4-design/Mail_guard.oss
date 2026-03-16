@@ -16,14 +16,13 @@ Covers all required test cases:
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
 import os
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
