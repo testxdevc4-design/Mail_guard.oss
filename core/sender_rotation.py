@@ -34,6 +34,7 @@ sender is at or above the threshold, this function:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -203,7 +204,7 @@ async def check_and_rotate(project_id: str) -> bool:
     bool
         ``True`` if rotation happened, ``False`` otherwise.
     """
-    project = get_project(project_id)
+    project = await asyncio.to_thread(get_project, project_id)
     if project is None:
         logger.warning("check_and_rotate: project not found project_id=%s", project_id)
         return False
@@ -214,7 +215,7 @@ async def check_and_rotate(project_id: str) -> bool:
         )
         return False
 
-    current_sender = get_sender_email(project.sender_email_id)
+    current_sender = await asyncio.to_thread(get_sender_email, project.sender_email_id)
     if current_sender is None:
         logger.warning(
             "check_and_rotate: sender not found sender_id=%s", project.sender_email_id
@@ -227,7 +228,7 @@ async def check_and_rotate(project_id: str) -> bool:
         return False
 
     # Load all active senders and pick the best one.
-    all_senders = list_sender_emails(is_active=True)
+    all_senders = await asyncio.to_thread(list_sender_emails, is_active=True)
     if not all_senders:
         logger.warning(
             "check_and_rotate: no active senders for project_id=%s", project_id
@@ -240,7 +241,7 @@ async def check_and_rotate(project_id: str) -> bool:
         return False
 
     # Update the project's sender in Supabase.
-    update_project(project_id, {"sender_email_id": best.id})
+    await asyncio.to_thread(update_project, project_id, {"sender_email_id": best.id})
 
     usage_pct_display = round(usage_pct * 100, 1)
     alert_msg = (

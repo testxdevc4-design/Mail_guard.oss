@@ -48,6 +48,17 @@ from core.redis_client import arq_redis_settings
 logger = logging.getLogger(__name__)
 
 
+def _serialize_payload(payload: Dict[str, Any]) -> bytes:
+    """Return a deterministic compact JSON encoding of *payload*.
+
+    Uses ``sort_keys=True`` and compact separators so the bytes are identical
+    regardless of Python dict insertion order.  Both :func:`sign_payload` and
+    the webhook delivery task use this function so the signed bytes always
+    match the bytes sent on the wire.
+    """
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
 def sign_payload(raw_secret: str, payload: Dict[str, Any]) -> str:
     """Sign *payload* with *raw_secret* using HMAC-SHA256.
 
@@ -69,7 +80,7 @@ def sign_payload(raw_secret: str, payload: Dict[str, Any]) -> str:
     str
         Signature string in the format ``sha256={hex_digest}``.
     """
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    body = _serialize_payload(payload)
     digest = hmac.new(raw_secret.encode(), body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
 

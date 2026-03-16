@@ -127,3 +127,56 @@ npm test (from sdks/js/)
 6. Update GitHub Actions CI to include bandit + mypy + SDK tests
 7. Create `SECURITY.md` with 12-point audit as specified in Part 15
 8. Update `HANDOFF.md` with Part 15 results — this is the final handoff
+
+---
+
+# HANDOFF — Part 17 of 18 — POST-CONNECTION-AUDIT
+
+## Status
+
+Part 17 completed a cross-service connection audit of MailGuard OSS and fixed
+every live connection bug found through static analysis of all inter-service
+call paths.
+
+## Connection bugs fixed (Part 17)
+
+### Fix 12 — Webhook payload/signature mismatch
+- **File:** `apps/worker/tasks/deliver_webhook.py`
+- Signed bytes used `sort_keys=True`; sent bytes used aiohttp default (no sort).
+- Fixed by computing `body_bytes = json.dumps(payload, sort_keys=True, ...).encode()` once and sending with `data=body_bytes`.
+- All session mock `post` methods in `tests/test_webhooks.py` updated to accept `data=`.
+
+### Fix 13 — `asyncio.create_task()` drops reference in OTP/magic routes
+- **Files:** `apps/api/routes/otp.py`, `apps/api/routes/magic.py`
+- Four `asyncio.create_task(...)` calls replaced with `asyncio.ensure_future(...)` — the recommended fire-and-forget pattern in FastAPI route handlers.
+
+### Fix 14 — `MAGIC_LINK_BASE_URL` not configurable
+- **Files:** `core/config.py`, `apps/api/routes/magic.py`
+- Added `MAGIC_LINK_BASE_URL: str = ''` to `Settings`.
+- `send_magic_link` now uses `settings.MAGIC_LINK_BASE_URL` when set, falling back to `request.base_url`.
+
+### Fix 15 — Blocking sync DB calls in async `check_and_rotate()`
+- **File:** `core/sender_rotation.py`
+- All four sync DB calls (`get_project`, `get_sender_email`, `list_sender_emails`, `update_project`) wrapped with `await asyncio.to_thread(fn, *args)`.
+
+## Test results
+
+```
+pytest tests/ -q
+394 passed, 0 failed, 70 warnings
+```
+
+Equal to Part 16 baseline — no regressions.
+
+## Part 18 checklist
+
+- [ ] Run full docker-compose up and confirm all 3 services start cleanly
+- [ ] Execute all 8 live connection tests from the problem statement (requires live environment with SMTP, Telegram, Redis, Supabase)
+- [ ] JS SDK: `npm run build` then test against live API
+- [ ] Python SDK: `pip install -e sdks/python/` then test against live API
+- [ ] Rate limiting: send 15 rapid OTP requests, confirm 11th returns 429 with retry_after
+- [ ] Webhook delivery: register on webhook.site, verify HMAC signature on received events
+- [ ] Sender rotation: set Redis counter to 90% limit, trigger rotation check, confirm DB update + Telegram alert
+- [ ] Bot → API: run /start, /addemail, /newproject, /genkey, /logs workflows
+- [ ] Append any additional connection fixes to INTEGRATION_FIXES.md
+- [ ] Mark HANDOFF.md POST-CONNECTION-AUDIT with actual test output from live runs

@@ -237,7 +237,7 @@ async def send_otp(
 
         # ── 6. Fire webhook event (fire-and-forget) ───────────────────────────
         if _fire_event is not None:
-            asyncio.create_task(
+            asyncio.ensure_future(
                 _fire_event(
                     project.id,
                     "otp.sent",
@@ -281,7 +281,7 @@ async def verify_otp(
     if result.get("verified"):
         # Fire webhook event (fire-and-forget)
         if _fire_event is not None:
-            asyncio.create_task(
+            asyncio.ensure_future(
                 _fire_event(
                     key_row.project_id,
                     "otp.verified",

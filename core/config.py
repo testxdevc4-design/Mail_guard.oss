@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     PORT: int = 3000
     ALLOWED_ORIGINS: List[str] = []
     INTERNAL_API_URL: str = ''
+    MAGIC_LINK_BASE_URL: str = ''
     ROTATION_THRESHOLD: float = 0.80
 
     @field_validator('REDIS_URL')
