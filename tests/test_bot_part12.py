@@ -742,3 +742,855 @@ class TestMainHandlerRegistration:
 
         # add_handler should have been called multiple times (for all handlers)
         assert mock_instance.add_handler.call_count >= 10
+
+
+# ===========================================================================
+# Part 15 additions — coverage for bot commands and session
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# apps/bot/commands/start.py
+# ---------------------------------------------------------------------------
+
+class TestStartCommand:
+    @pytest.mark.asyncio
+    async def test_start_all_ok(self) -> None:
+        """start_command sends status report when all systems are healthy."""
+        from apps.bot.commands.start import start_command
+
+        update = _make_update()
+        ctx = _make_context()
+
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        mock_http_client = AsyncMock()
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=None)
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        mock_db_client = MagicMock()
+        (
+            mock_db_client
+            .table.return_value
+            .select.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = MagicMock(data=[{"id": "p1"}])
+
+        with (
+            patch("apps.bot.commands.start.get_client", return_value=mock_db_client),
+            patch("apps.bot.commands.start.get_redis", return_value=mock_redis),
+            patch("apps.bot.commands.start.settings.INTERNAL_API_URL", "http://api:3000"),
+            patch("apps.bot.commands.start.httpx.AsyncClient", return_value=mock_http_client),
+        ):
+            await start_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+        text = update.message.reply_text.call_args[0][0]
+        assert "MailGuard Status" in text
+
+    @pytest.mark.asyncio
+    async def test_start_db_down(self) -> None:
+        """start_command reports Supabase DB as failed when get_client raises."""
+        from apps.bot.commands.start import start_command
+
+        update = _make_update()
+        ctx = _make_context()
+
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(return_value=True)
+
+        with (
+            patch("apps.bot.commands.start.get_client", side_effect=RuntimeError("db down")),
+            patch("apps.bot.commands.start.get_redis", return_value=mock_redis),
+            patch("apps.bot.commands.start.settings.INTERNAL_API_URL", ""),
+        ):
+            await start_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_redis_down(self) -> None:
+        """start_command reports Redis as failed when ping raises."""
+        from apps.bot.commands.start import start_command
+
+        update = _make_update()
+        ctx = _make_context()
+
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(side_effect=RuntimeError("redis down"))
+
+        mock_db_client = MagicMock()
+        (
+            mock_db_client
+            .table.return_value
+            .select.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = MagicMock(data=[{"id": "p1"}])
+
+        with (
+            patch("apps.bot.commands.start.get_client", return_value=mock_db_client),
+            patch("apps.bot.commands.start.get_redis", return_value=mock_redis),
+            patch("apps.bot.commands.start.settings.INTERNAL_API_URL", ""),
+        ):
+            await start_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_no_message_returns_early(self) -> None:
+        """start_command exits silently when update.message is None."""
+        from apps.bot.commands.start import start_command
+
+        update = MagicMock()
+        update.message = None
+        ctx = _make_context()
+
+        await start_command(update, ctx)  # Must not raise
+
+
+# ---------------------------------------------------------------------------
+# apps/bot/commands/webhooks.py
+# ---------------------------------------------------------------------------
+
+class TestWebhooksCommandPart15:
+    @pytest.mark.asyncio
+    async def test_webhooks_no_args(self) -> None:
+        """webhooks_command replies with usage when no args provided."""
+        from apps.bot.commands.webhooks import webhooks_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await webhooks_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_webhooks_project_not_found(self) -> None:
+        """webhooks_command replies with error when slug not found."""
+        from apps.bot.commands.webhooks import webhooks_command
+
+        update = _make_update()
+        ctx = _make_context(args=["unknown-slug"])
+
+        with patch("apps.bot.commands.webhooks.get_project_by_slug", return_value=None):
+            await webhooks_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+        assert "not found" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_webhooks_db_error_on_project(self) -> None:
+        """webhooks_command replies with error when DB lookup raises."""
+        from apps.bot.commands.webhooks import webhooks_command
+
+        update = _make_update()
+        ctx = _make_context(args=["slug"])
+
+        with patch(
+            "apps.bot.commands.webhooks.get_project_by_slug",
+            side_effect=RuntimeError("db down"),
+        ):
+            await webhooks_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_webhooks_success(self) -> None:
+        """webhooks_command shows list when webhooks exist."""
+        from apps.bot.commands.webhooks import webhooks_command
+
+        project = _make_project()
+        wh = MagicMock()
+        wh.id = "wh-001"
+        wh.url = "https://app.example.com/webhook"
+        wh.events = ["otp.sent"]
+        wh.is_active = True
+        wh.failure_count = 0
+
+        update = _make_update()
+        ctx = _make_context(args=["demo"])
+
+        with (
+            patch("apps.bot.commands.webhooks.get_project_by_slug", return_value=project),
+            patch("apps.bot.commands.webhooks.list_webhooks", return_value=[wh]),
+        ):
+            await webhooks_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_removewebhook_no_args(self) -> None:
+        """removewebhook_command replies with usage when no args provided."""
+        from apps.bot.commands.webhooks import remove_webhook_command as removewebhook_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await removewebhook_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_removewebhook_not_found(self) -> None:
+        """removewebhook_command replies with error when webhook not found."""
+        from apps.bot.commands.webhooks import remove_webhook_command as removewebhook_command
+
+        update = _make_update()
+        ctx = _make_context(args=["wh-999"])
+
+        with patch("apps.bot.commands.webhooks.get_webhook", return_value=None):
+            await removewebhook_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_removewebhook_success(self) -> None:
+        """removewebhook_command deactivates and confirms."""
+        from apps.bot.commands.webhooks import remove_webhook_command as removewebhook_command
+
+        wh = MagicMock()
+        wh.id = "wh-001"
+        wh.url = "https://app.example.com/webhook"
+
+        update = _make_update()
+        ctx = _make_context(args=["wh-001"])
+
+        with (
+            patch("apps.bot.commands.webhooks.get_webhook", return_value=wh),
+            patch("apps.bot.commands.webhooks.update_webhook", return_value=wh),
+        ):
+            await removewebhook_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_removewebhook_no_message(self) -> None:
+        """removewebhook_command exits silently when update.message is None."""
+        from apps.bot.commands.webhooks import remove_webhook_command as removewebhook_command
+
+        update = MagicMock()
+        update.message = None
+        ctx = _make_context()
+
+        await removewebhook_command(update, ctx)  # Must not raise
+
+
+# ---------------------------------------------------------------------------
+# apps/bot/commands/keys.py — extra coverage
+# ---------------------------------------------------------------------------
+
+class TestKeysCommandPart15:
+    @pytest.mark.asyncio
+    async def test_genkey_no_args(self) -> None:
+        """genkey_command replies with usage when no args provided."""
+        from apps.bot.commands.keys import genkey_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await genkey_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_genkey_project_not_found(self) -> None:
+        """genkey_command replies with error when slug not found."""
+        from apps.bot.commands.keys import genkey_command
+
+        update = _make_update()
+        ctx = _make_context(args=["slug"])
+
+        with patch("apps.bot.commands.keys.get_project_by_slug", return_value=None):
+            await genkey_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_genkey_success(self) -> None:
+        """genkey_command generates and shows plaintext key once."""
+        from apps.bot.commands.keys import genkey_command
+
+        project = _make_project()
+        key = _make_api_key()
+
+        update = _make_update()
+        ctx = _make_context(args=["demo"])
+
+        with (
+            patch("apps.bot.commands.keys.get_project_by_slug", return_value=project),
+            patch(
+                "apps.bot.commands.keys.generate_api_key",
+                return_value=("mg_live_" + "a" * 64, key),
+            ),
+        ):
+            await genkey_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+        text = update.message.reply_text.call_args[0][0]
+        assert "mg_live_" in text
+
+    @pytest.mark.asyncio
+    async def test_revokekey_no_args(self) -> None:
+        """revokekey_command replies with usage when no args provided."""
+        from apps.bot.commands.keys import revokekey_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await revokekey_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_revokekey_not_found(self) -> None:
+        """revokekey_command replies with error when key not found."""
+        from apps.bot.commands.keys import revokekey_command
+
+        update = _make_update()
+        ctx = _make_context(args=["key-999"])
+
+        with patch("apps.bot.commands.keys.get_api_key", return_value=None):
+            await revokekey_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_revokekey_success(self) -> None:
+        """revokekey_command deactivates the key and confirms."""
+        from apps.bot.commands.keys import revokekey_command
+
+        key = _make_api_key()
+
+        update = _make_update()
+        ctx = _make_context(args=["key-001"])
+
+        with (
+            patch("apps.bot.commands.keys.get_api_key", return_value=key),
+            patch("apps.bot.commands.keys.revoke_api_key", return_value=key),
+        ):
+            await revokekey_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# apps/bot/commands/projects.py — extra coverage
+# ---------------------------------------------------------------------------
+
+class TestProjectsCommandPart15:
+    @pytest.mark.asyncio
+    async def test_projects_no_projects(self) -> None:
+        """projects_command replies with empty message when no projects exist."""
+        from apps.bot.commands.projects import projects_command
+
+        update = _make_update()
+        ctx = _make_context()
+
+        with patch("apps.bot.commands.projects.list_projects", return_value=[]):
+            await projects_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_projects_with_results(self) -> None:
+        """projects_command shows list of projects."""
+        from apps.bot.commands.projects import projects_command
+
+        project = _make_project()
+        update = _make_update()
+        ctx = _make_context()
+
+        with patch("apps.bot.commands.projects.list_projects", return_value=[project]):
+            await projects_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_projects_db_error(self) -> None:
+        """projects_command handles DB exception gracefully."""
+        from apps.bot.commands.projects import projects_command
+
+        update = _make_update()
+        ctx = _make_context()
+
+        with patch(
+            "apps.bot.commands.projects.list_projects",
+            side_effect=RuntimeError("db down"),
+        ):
+            await projects_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_activate_project_no_args(self) -> None:
+        """activateproject_command replies with usage when no args provided."""
+        from apps.bot.commands.projects import activateproject_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await activateproject_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_activate_project_success(self) -> None:
+        """activateproject_command activates a project."""
+        from apps.bot.commands.projects import activateproject_command
+
+        project = _make_project()
+        project.is_active = False
+
+        update = _make_update()
+        ctx = _make_context(args=["demo"])
+
+        with (
+            patch("apps.bot.commands.projects.get_project_by_slug", return_value=project),
+            patch("apps.bot.commands.projects.update_project", return_value=project),
+        ):
+            await activateproject_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# apps/bot/commands/logs.py — extra coverage
+# ---------------------------------------------------------------------------
+
+class TestLogsCommandPart15:
+    @pytest.mark.asyncio
+    async def test_logs_no_args(self) -> None:
+        """logs_command replies with usage when no args provided."""
+        from apps.bot.commands.logs import logs_command
+
+        update = _make_update()
+        ctx = _make_context(args=[])
+        await logs_command(update, ctx)
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_logs_project_not_found(self) -> None:
+        """logs_command replies with error when project not found."""
+        from apps.bot.commands.logs import logs_command
+
+        update = _make_update()
+        ctx = _make_context(args=["unknown"])
+
+        with patch("apps.bot.commands.logs.get_project_by_slug", return_value=None):
+            await logs_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_logs_shows_entries(self) -> None:
+        """logs_command shows log entries when they exist."""
+        from apps.bot.commands.logs import logs_command
+
+        project = _make_project()
+        log = _make_log()
+
+        update = _make_update()
+        ctx = _make_context(args=["demo"])
+
+        with (
+            patch("apps.bot.commands.logs.get_project_by_slug", return_value=project),
+            patch("apps.bot.commands.logs.list_email_logs_paged", return_value=([log], None)),
+        ):
+            await logs_command(update, ctx)
+
+        update.message.reply_text.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# apps/bot/session.py
+# ---------------------------------------------------------------------------
+
+class TestSupabasePersistenceSession:
+    """Tests for the Supabase-backed session persistence helper."""
+
+    def _make_client(self, value: Any = None) -> MagicMock:
+        """Build a mock Supabase client that returns *value* from maybe_single."""
+        client = MagicMock()
+        result = MagicMock()
+        result.data = value
+        (
+            client
+            .table.return_value
+            .select.return_value
+            .eq.return_value
+            .maybe_single.return_value
+            .execute.return_value
+        ) = result
+        (
+            client
+            .table.return_value
+            .upsert.return_value
+            .execute.return_value
+        ) = MagicMock()
+        return client
+
+    def test_db_load_returns_value(self) -> None:
+        """_db_load returns the stored value from bot_sessions."""
+        from apps.bot.session import _db_load
+
+        mock_client = self._make_client(value={"foo": "bar"})
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            result = _db_load("conversations")
+        assert result == {"foo": "bar"}
+
+    def test_db_load_returns_none_when_no_data(self) -> None:
+        """_db_load returns None when bot_sessions row has no data."""
+        from apps.bot.session import _db_load
+
+        mock_client = self._make_client(value=None)
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            result = _db_load("user_data")
+        assert result is None
+
+    def test_db_load_returns_none_on_exception(self) -> None:
+        """_db_load returns None when get_client raises."""
+        from apps.bot.session import _db_load
+
+        with patch("apps.bot.session.get_client", side_effect=RuntimeError("db down")):
+            result = _db_load("bot_data")
+        assert result is None
+
+    def test_db_save_calls_upsert(self) -> None:
+        """_db_save calls upsert on bot_sessions table."""
+        from apps.bot.session import _db_save
+
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            _db_save("conversations", {"state": 1})
+
+        mock_client.table.assert_called_with("bot_sessions")
+        mock_client.table.return_value.upsert.assert_called_once()
+
+    def test_db_save_handles_exception(self) -> None:
+        """_db_save logs warning and does not raise on exception."""
+        from apps.bot.session import _db_save
+
+        with patch("apps.bot.session.get_client", side_effect=RuntimeError("db down")):
+            _db_save("test_key", {"data": "value"})  # Must not raise
+
+    def test_tuple_key_serialization(self) -> None:
+        """_tuple_key and _parse_tuple_key are inverse operations."""
+        from apps.bot.session import _tuple_key, _parse_tuple_key
+
+        original = (123, 456)
+        serialized = _tuple_key(original)
+        assert isinstance(serialized, str)
+        restored = _parse_tuple_key(serialized)
+        assert restored == original
+
+    def test_tuple_key_with_strings(self) -> None:
+        """_tuple_key handles string elements."""
+        from apps.bot.session import _tuple_key, _parse_tuple_key
+
+        original = ("chat-1", "user-2")
+        serialized = _tuple_key(original)
+        restored = _parse_tuple_key(serialized)
+        assert restored == original
+
+    @pytest.mark.asyncio
+    async def test_get_conversations_empty(self) -> None:
+        """get_conversations returns empty dict when no conversation data stored."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = self._make_client(value=None)
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            convs = await sess.get_conversations("wizard_state")
+
+        assert convs == {}
+
+    @pytest.mark.asyncio
+    async def test_update_and_get_conversation(self) -> None:
+        """update_conversation saves state; get_conversations reads it back."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = MagicMock()
+        # _db_load returns None initially (no data)
+        result_empty = MagicMock()
+        result_empty.data = None
+        (
+            mock_client
+            .table.return_value
+            .select.return_value
+            .eq.return_value
+            .maybe_single.return_value
+            .execute.return_value
+        ) = result_empty
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.update_conversation("wizard", (1, 2), "STATE_A")
+            convs = await sess.get_conversations("wizard")
+
+        assert convs[(1, 2)] == "STATE_A"
+
+    @pytest.mark.asyncio
+    async def test_update_conversation_removes_none_state(self) -> None:
+        """update_conversation with new_state=None removes the key."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = MagicMock()
+        result_empty = MagicMock()
+        result_empty.data = None
+        (
+            mock_client
+            .table.return_value
+            .select.return_value
+            .eq.return_value
+            .maybe_single.return_value
+            .execute.return_value
+        ) = result_empty
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.update_conversation("wizard", (1, 2), "STATE_A")
+            await sess.update_conversation("wizard", (1, 2), None)
+
+    @pytest.mark.asyncio
+    async def test_get_user_data_empty(self) -> None:
+        """get_user_data returns empty dict when no user data stored."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = self._make_client(value=None)
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            data = await sess.get_user_data()
+
+        assert data == {}
+
+    @pytest.mark.asyncio
+    async def test_update_user_data(self) -> None:
+        """update_user_data saves user data."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.update_user_data(123, {"key": "value"})
+
+        assert sess._user_data[123] == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_drop_user_data(self) -> None:
+        """drop_user_data removes user data for the given user_id."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        sess._user_data[456] = {"tmp": "data"}
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.drop_user_data(456)
+
+        assert 456 not in sess._user_data
+
+    @pytest.mark.asyncio
+    async def test_get_chat_data_empty(self) -> None:
+        """get_chat_data returns empty dict when no chat data stored."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = self._make_client(value=None)
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            data = await sess.get_chat_data()
+
+        assert data == {}
+
+    @pytest.mark.asyncio
+    async def test_update_chat_data(self) -> None:
+        """update_chat_data saves chat data."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.update_chat_data(789, {"state": "wizard"})
+
+        assert sess._chat_data[789] == {"state": "wizard"}
+
+    @pytest.mark.asyncio
+    async def test_drop_chat_data(self) -> None:
+        """drop_chat_data removes chat data for the given chat_id."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        sess._chat_data[321] = {"tmp": "data"}
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.drop_chat_data(321)
+
+        assert 321 not in sess._chat_data
+
+    @pytest.mark.asyncio
+    async def test_get_bot_data_empty(self) -> None:
+        """get_bot_data returns empty dict when no bot data stored."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = self._make_client(value=None)
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            data = await sess.get_bot_data()
+
+        assert data == {}
+
+    @pytest.mark.asyncio
+    async def test_update_bot_data(self) -> None:
+        """update_bot_data saves bot-level data."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        with patch("apps.bot.session.get_client", return_value=mock_client):
+            await sess.update_bot_data({"feature_flags": {"v2": True}})
+
+        assert sess._bot_data == {"feature_flags": {"v2": True}}
+
+    @pytest.mark.asyncio
+    async def test_callback_data_returns_none(self) -> None:
+        """get_callback_data always returns None (callback_data=False)."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        result = await sess.get_callback_data()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_update_callback_data_is_noop(self) -> None:
+        """update_callback_data does nothing (callback_data=False)."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        await sess.update_callback_data({"any": "data"})  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_flush_is_noop(self) -> None:
+        """flush() completes without side effects."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        await sess.flush()  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_refresh_user_data_is_noop(self) -> None:
+        """refresh_user_data does nothing (data managed by update_user_data)."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        await sess.refresh_user_data(123, {"key": "value"})  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_refresh_chat_data_is_noop(self) -> None:
+        """refresh_chat_data does nothing (data managed by update_chat_data)."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        await sess.refresh_chat_data(789, {"key": "value"})  # Must not raise
+
+    @pytest.mark.asyncio
+    async def test_refresh_bot_data_is_noop(self) -> None:
+        """refresh_bot_data does nothing (data managed by update_bot_data)."""
+        from apps.bot.session import SupabasePersistence
+
+        sess = SupabasePersistence()
+        await sess.refresh_bot_data({"key": "value"})  # Must not raise
+
+
+# ---------------------------------------------------------------------------
+# apps/worker/main.py — _parse_redis_settings unit tests
+# ---------------------------------------------------------------------------
+
+class TestParseRedisSettings:
+    def test_parse_basic_redis_url(self) -> None:
+        """Simple redis://host:port/db is parsed correctly."""
+        from apps.worker.main import _parse_redis_settings
+
+        with patch("apps.worker.main.settings.REDIS_URL", "redis://myhost:6380/1"):
+            rs = _parse_redis_settings()
+
+        assert rs.host == "myhost"
+        assert rs.port == 6380
+        assert rs.database == 1
+        assert rs.ssl is False
+        assert rs.password is None
+
+    def test_parse_rediss_url_enables_ssl(self) -> None:
+        """rediss:// scheme enables SSL flag."""
+        from apps.worker.main import _parse_redis_settings
+
+        with patch("apps.worker.main.settings.REDIS_URL", "rediss://redis.upstash.io:6380"):
+            rs = _parse_redis_settings()
+
+        assert rs.ssl is True
+        assert rs.host == "redis.upstash.io"
+        assert rs.port == 6380
+
+    def test_parse_url_with_password(self) -> None:
+        """redis://:password@host:port is parsed to extract password."""
+        from apps.worker.main import _parse_redis_settings
+
+        with patch(
+            "apps.worker.main.settings.REDIS_URL",
+            "redis://:secretpass@redis.example.com:6379",
+        ):
+            rs = _parse_redis_settings()
+
+        assert rs.password == "secretpass"
+        assert rs.host == "redis.example.com"
+
+    def test_parse_url_no_port_defaults_to_6379(self) -> None:
+        """URL without explicit port defaults to 6379."""
+        from apps.worker.main import _parse_redis_settings
+
+        with patch("apps.worker.main.settings.REDIS_URL", "redis://myhost"):
+            rs = _parse_redis_settings()
+
+        assert rs.host == "myhost"
+        assert rs.port == 6379
+
+    def test_parse_url_no_db_defaults_to_zero(self) -> None:
+        """URL without explicit /db suffix defaults to database=0."""
+        from apps.worker.main import _parse_redis_settings
+
+        with patch("apps.worker.main.settings.REDIS_URL", "redis://localhost:6379"):
+            rs = _parse_redis_settings()
+
+        assert rs.database == 0
+
+    def test_worker_settings_has_functions(self) -> None:
+        """WorkerSettings.functions includes send_email and deliver_webhook."""
+        from apps.worker.main import WorkerSettings
+
+        func_names = [f.__name__ for f in WorkerSettings.functions]
+        assert "task_send_email" in func_names
+        assert "task_deliver_webhook" in func_names
+
+    def test_worker_settings_has_cron_jobs(self) -> None:
+        """WorkerSettings.cron_jobs has two registered cron tasks."""
+        from apps.worker.main import WorkerSettings
+
+        assert len(WorkerSettings.cron_jobs) >= 2
+
+    def test_worker_settings_job_timeout(self) -> None:
+        """WorkerSettings.job_timeout is set to a reasonable value."""
+        from apps.worker.main import WorkerSettings
+
+        assert WorkerSettings.job_timeout >= 600
