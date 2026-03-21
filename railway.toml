@@ -32,3 +32,15 @@ dockerfile = "Dockerfile.bot"
 
 [services.deploy]
 startCommand = "python -m apps.bot.main"
+
+[[services]]
+name = "frontend"
+source = "."
+
+[services.build]
+dockerfile = "Dockerfile.frontend"
+
+[services.deploy]
+startCommand = "nginx -g 'daemon off;'"
+healthcheckPath = "/"
+healthcheckTimeout = 10

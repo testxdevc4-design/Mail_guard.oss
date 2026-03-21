@@ -9,6 +9,7 @@ Covers every validator in core/config.py:
   - REDIS_URL not starting with redis:// or rediss:// raises ValidationError
   - Missing required field raises ValidationError
   - All valid values together produce a working Settings instance
+  - FRONTEND_URL is merged into allowed_origins
 """
 from __future__ import annotations
 
@@ -333,3 +334,58 @@ class TestAllValidValuesTogether:
         """ALLOWED_ORIGINS defaults to empty list."""
         settings = _make_settings_from_env()
         assert settings.ALLOWED_ORIGINS == []  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# FRONTEND_URL and allowed_origins property
+# ---------------------------------------------------------------------------
+
+class TestFrontendUrlAndAllowedOrigins:
+    def test_frontend_url_default_empty(self) -> None:
+        """FRONTEND_URL defaults to empty string."""
+        settings = _make_settings_from_env()
+        assert settings.FRONTEND_URL == ""  # type: ignore[attr-defined]
+
+    def test_allowed_origins_no_frontend(self) -> None:
+        """allowed_origins equals ALLOWED_ORIGINS when FRONTEND_URL is empty."""
+        settings = _make_settings_from_env(
+            {
+                "ALLOWED_ORIGINS": '["https://a.com","https://b.com"]',
+                "FRONTEND_URL": "",
+            }
+        )
+        assert settings.allowed_origins == ["https://a.com", "https://b.com"]  # type: ignore[attr-defined]
+
+    def test_frontend_url_appended_to_allowed_origins(self) -> None:
+        """FRONTEND_URL is appended to allowed_origins when set."""
+        settings = _make_settings_from_env(
+            {
+                "ALLOWED_ORIGINS": '["https://a.com"]',
+                "FRONTEND_URL": "https://dashboard.example.com",
+            }
+        )
+        origins = settings.allowed_origins  # type: ignore[attr-defined]
+        assert origins == ["https://a.com", "https://dashboard.example.com"]
+
+    def test_frontend_url_deduplicated(self) -> None:
+        """FRONTEND_URL already present in ALLOWED_ORIGINS is not duplicated."""
+        settings = _make_settings_from_env(
+            {
+                "ALLOWED_ORIGINS": '["https://dash.example.com","https://other.com"]',
+                "FRONTEND_URL": "https://dash.example.com",
+            }
+        )
+        origins = settings.allowed_origins  # type: ignore[attr-defined]
+        assert origins.count("https://dash.example.com") == 1
+
+    def test_empty_allowed_origins_with_frontend_url(self) -> None:
+        """When ALLOWED_ORIGINS is empty, allowed_origins returns only FRONTEND_URL."""
+        settings = _make_settings_from_env(
+            {"FRONTEND_URL": "https://dashboard.example.com"}
+        )
+        assert settings.allowed_origins == ["https://dashboard.example.com"]  # type: ignore[attr-defined]
+
+    def test_both_empty_returns_empty_list(self) -> None:
+        """When both ALLOWED_ORIGINS and FRONTEND_URL are empty, result is []."""
+        settings = _make_settings_from_env({"FRONTEND_URL": ""})
+        assert settings.allowed_origins == []  # type: ignore[attr-defined]
