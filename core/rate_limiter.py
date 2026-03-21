@@ -1,21 +1,24 @@
 """
 Redis sliding-window rate limiter for MailGuard OSS.
 
-All 5 tiers are implemented.  Each check uses an atomic Redis pipeline
+All tiers are implemented.  Each check uses an atomic Redis pipeline
 (``zremrangebyscore`` → ``zadd`` → ``zcard`` → ``expire``) so the count can
 never be skewed by concurrent requests.
 
 Tier reference
 --------------
-+--------------------+----------------------------------+-------+---------+
-| Name               | Redis key pattern                | Limit | Window  |
-+--------------------+----------------------------------+-------+---------+
-| email_hourly       | rl:email:{project_id}:{hash}     |    10 | 1 hour  |
-| key_hourly         | rl:key:{key_id}                  | 1,000 | 1 hour  |
-| ip_15min           | rl:ip:{ip}                       |   100 | 15 min  |
-| project_daily      | rl:proj:{project_id}:daily       |10,000 | 24 hrs  |
-| sender_daily       | rl:smtp:{sender_id}:daily        |   500 | 24 hrs  |
-+--------------------+----------------------------------+-------+---------+
++------------------------+------------------------------------------+-------+---------+
+| Name                   | Redis key pattern                        | Limit | Window  |
++------------------------+------------------------------------------+-------+---------+
+| email_hourly           | rl:email:{project_id}:{hash}             |    10 | 1 hour  |
+| key_hourly             | rl:key:{key_id}                          | 1,000 | 1 hour  |
+| ip_15min               | rl:ip:{ip}                               |   100 | 15 min  |
+| project_daily          | rl:proj:{project_id}:daily               |10,000 | 24 hrs  |
+| sender_daily           | rl:smtp:{sender_id}:daily                |   500 | 24 hrs  |
+| key_verification_1min  | rl:kv:{element_id}                       |     5 | 1 min   |
+| element_creation_1min  | rl:ec:{user_id}                          |    20 | 1 min   |
+| reply_creation_1min    | rl:rc:{user_id}                          |    10 | 1 min   |
++------------------------+------------------------------------------+-------+---------+
 """
 from __future__ import annotations
 
@@ -88,3 +91,36 @@ def check_sender_daily(redis: Any, sender_id: str) -> bool:
     """Allow at most 500 emails per SMTP sender per 24 hours."""
     key = f"rl:smtp:{sender_id}:daily"
     return _sliding_window(redis, key, limit=500, window_seconds=86_400)
+
+
+# ---------------------------------------------------------------------------
+# Board / element tiers (brute-force & abuse protection)
+# ---------------------------------------------------------------------------
+
+def check_key_verification(redis: Any, element_id: str) -> bool:
+    """Allow at most 5 key-verification attempts per element per minute.
+
+    Protects the element ownership key from brute-force guessing.  After 5
+    failed (or successful) attempts within a 60-second window the endpoint
+    returns 429 until the window resets.
+    """
+    key = f"rl:kv:{element_id}"
+    return _sliding_window(redis, key, limit=5, window_seconds=60)
+
+
+def check_element_creation(redis: Any, user_id: str) -> bool:
+    """Allow at most 20 element-creation requests per user per minute.
+
+    Prevents spam creation of board elements by a single anonymous user.
+    """
+    key = f"rl:ec:{user_id}"
+    return _sliding_window(redis, key, limit=20, window_seconds=60)
+
+
+def check_reply_creation(redis: Any, user_id: str) -> bool:
+    """Allow at most 10 reply-creation requests per user per minute.
+
+    Prevents spam replies / coord-reply flooding from a single anonymous user.
+    """
+    key = f"rl:rc:{user_id}"
+    return _sliding_window(redis, key, limit=10, window_seconds=60)

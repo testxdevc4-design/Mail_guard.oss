@@ -6,6 +6,7 @@ from apps.api.routes import magic
 from apps.api.routes import webhooks
 from apps.api.middleware.rate_limit import RateLimitMiddleware
 from apps.api.middleware.security import SecurityHeadersMiddleware
+from apps.api.middleware.csrf import CSRFProtectionMiddleware
 
 
 def create_app() -> FastAPI:
@@ -21,11 +22,12 @@ def create_app() -> FastAPI:
         allow_origins=settings.ALLOWED_ORIGINS,  # never ['*']
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
     )
 
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(CSRFProtectionMiddleware)
 
     app.include_router(health.router, tags=["System"])
     app.include_router(otp.router)
