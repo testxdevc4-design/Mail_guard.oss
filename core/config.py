@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     ENV: str = 'production'
     PORT: int = 3000
     ALLOWED_ORIGINS: List[str] = []
+    FRONTEND_URL: str = ''           # public URL of the frontend dashboard
     INTERNAL_API_URL: str = ''
     MAGIC_LINK_BASE_URL: str = ''
     ROTATION_THRESHOLD: float = 0.80
@@ -44,6 +45,14 @@ class Settings(BaseSettings):
         if len(v) < 64:
             raise ValueError('JWT_SECRET min 64 chars')
         return v
+
+    @property
+    def allowed_origins(self) -> List[str]:
+        """Return ALLOWED_ORIGINS merged with FRONTEND_URL when set."""
+        origins = list(self.ALLOWED_ORIGINS)
+        if self.FRONTEND_URL and self.FRONTEND_URL not in origins:
+            origins.append(self.FRONTEND_URL)
+        return origins
 
     class Config:
         env_file = '.env'

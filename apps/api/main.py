@@ -19,7 +19,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,  # never ['*']
+        allow_origins=settings.allowed_origins,  # ALLOWED_ORIGINS + FRONTEND_URL
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],

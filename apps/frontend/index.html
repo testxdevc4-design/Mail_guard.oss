@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MailGuard — Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>MailGuard</h1>
+      <p class="tagline">Transactional email guard dashboard</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- Connection panel -->
+    <section class="card" id="auth-card">
+      <h2>Connect</h2>
+      <div class="form-row">
+        <label for="api-url">API Base URL</label>
+        <input
+          type="url"
+          id="api-url"
+          placeholder="https://api.yourdomain.com"
+          autocomplete="off"
+        />
+      </div>
+      <div class="form-row">
+        <label for="api-key">API Key</label>
+        <input
+          type="password"
+          id="api-key"
+          placeholder="mg_…"
+          autocomplete="off"
+        />
+      </div>
+      <div class="form-row btn-row">
+        <button id="connect-btn" class="btn btn-primary">Connect</button>
+        <span id="conn-status" class="status"></span>
+      </div>
+    </section>
+
+    <!-- OTP panel -->
+    <section class="card hidden" id="otp-card">
+      <h2>One-Time Passwords</h2>
+      <div class="subsection">
+        <h3>Send OTP</h3>
+        <div class="form-row">
+          <label for="otp-email">Recipient email</label>
+          <input type="email" id="otp-email" placeholder="user@example.com" />
+        </div>
+        <div class="form-row">
+          <label for="otp-project">Project ID</label>
+          <input type="text" id="otp-project" placeholder="project-uuid" />
+        </div>
+        <div class="form-row btn-row">
+          <button id="otp-send-btn" class="btn btn-primary">Send OTP</button>
+        </div>
+        <pre id="otp-send-result" class="result hidden"></pre>
+      </div>
+
+      <hr />
+
+      <div class="subsection">
+        <h3>Verify OTP</h3>
+        <div class="form-row">
+          <label for="otp-verify-email">Email</label>
+          <input type="email" id="otp-verify-email" placeholder="user@example.com" />
+        </div>
+        <div class="form-row">
+          <label for="otp-code">OTP Code</label>
+          <input type="text" id="otp-code" placeholder="123456" maxlength="6" />
+        </div>
+        <div class="form-row">
+          <label for="otp-verify-project">Project ID</label>
+          <input type="text" id="otp-verify-project" placeholder="project-uuid" />
+        </div>
+        <div class="form-row btn-row">
+          <button id="otp-verify-btn" class="btn btn-primary">Verify OTP</button>
+        </div>
+        <pre id="otp-verify-result" class="result hidden"></pre>
+      </div>
+    </section>
+
+    <!-- Magic Links panel -->
+    <section class="card hidden" id="magic-card">
+      <h2>Magic Links</h2>
+      <div class="subsection">
+        <h3>Send Magic Link</h3>
+        <div class="form-row">
+          <label for="magic-email">Recipient email</label>
+          <input type="email" id="magic-email" placeholder="user@example.com" />
+        </div>
+        <div class="form-row">
+          <label for="magic-project">Project ID</label>
+          <input type="text" id="magic-project" placeholder="project-uuid" />
+        </div>
+        <div class="form-row">
+          <label for="magic-redirect">Redirect URL (optional)</label>
+          <input type="url" id="magic-redirect" placeholder="https://app.example.com/dashboard" />
+        </div>
+        <div class="form-row btn-row">
+          <button id="magic-send-btn" class="btn btn-primary">Send Magic Link</button>
+        </div>
+        <pre id="magic-send-result" class="result hidden"></pre>
+      </div>
+    </section>
+
+    <!-- Health panel -->
+    <section class="card hidden" id="health-card">
+      <h2>API Health</h2>
+      <div class="form-row btn-row">
+        <button id="health-btn" class="btn btn-secondary">Check Health</button>
+      </div>
+      <pre id="health-result" class="result hidden"></pre>
+    </section>
+  </main>
+
+  <footer>
+    <p>MailGuard OSS — <a href="https://github.com/testxdevc4-design/Mail_guard.oss" target="_blank" rel="noopener">GitHub</a></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
